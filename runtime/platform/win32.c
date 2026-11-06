@@ -853,7 +853,7 @@ void plat_aligned_free(void *p) { _aligned_free(p); }
 
 // ---- process
 
-#ifdef TOTK_PGO_GEN
+#ifdef NX2NAVI_PGO_GEN
 // compiler-rt's profile runtime (an instrumented build, tools/build_game.py --pgo gen). It writes its counters from an
 // atexit handler, which ExitProcess skips; __llvm_profile_dump writes them once and makes later writes no-ops.
 int __llvm_profile_dump(void);
@@ -877,7 +877,7 @@ __attribute__((constructor)) static void pgo_flush_start(void) {
 #endif
 
 void plat_exit(int code) {
-#ifdef TOTK_PGO_GEN
+#ifdef NX2NAVI_PGO_GEN
     __llvm_profile_dump();
 #endif
     fflush(stdout);
@@ -1763,10 +1763,10 @@ void plat_ipc_close(PlatIpc *p) {
 
 
 // ---- restart
-// TOTK_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
+// NX2NAVI_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
 // reused the id is not waited for. Waiting keeps the new process off the old one's files (the log it moves at start,
 // the saves) until the old one is gone; no handle is inherited, so none of them stays open in the new one either.
-#define RESTART_WAIT "TOTK_RESTART_WAIT"
+#define RESTART_WAIT "NX2NAVI_RESTART_WAIT"
 
 static uint64_t process_created(HANDLE h) {
     FILETIME c, e, k, u;

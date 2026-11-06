@@ -1,4 +1,4 @@
-// Motion-vector survey (TOTK_MV_SURVEY=1, off by default): measures whether per-object motion vectors can be made from
+// Motion-vector survey (NX2NAVI_MV_SURVEY=1, off by default): measures whether per-object motion vectors can be made from
 // the uniform blocks the scene's draws bind. Per-object vectors need each object's matrices of the previous frame; the
 // game keeps none (its shaders read gsys_shape, gsys_skeleton and gsys_projection of this frame only), so they would
 // have to be kept from the previous frame's uniform snapshot (vk_usnap.c). That works when a block's guest address

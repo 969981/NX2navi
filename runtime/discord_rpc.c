@@ -1,9 +1,9 @@
-// Discord Rich Presence: "Playing TotK Recomp" with the elapsed play time in the player's Discord status, through
+// Discord Rich Presence: "Playing NX2navi" with the elapsed play time in the player's Discord status, through
 // the local IPC of a running Discord client (platform.h's plat_ipc_*). Nothing leaves the machine but the activity
-// itself, and nothing is sent while TOTK_DISCORD_RPC is off (the default: the status is information about the
-// player's session). TOTK_DISCORD_APP_ID names the application whose name and artwork Discord shows — the default
-// is the project's own application, registered as "TotK Recomp"; a player who wants their own name or
-// art registers an application at discord.com/developers and puts its id in totk.ini — and TOTK_DISCORD_IMAGE the
+// itself, and nothing is sent while NX2NAVI_DISCORD_RPC is off (the default: the status is information about the
+// player's session). NX2NAVI_DISCORD_APP_ID names the application whose name and artwork Discord shows — the default
+// is the project's own application, registered as "NX2navi"; a player who wants their own name or
+// art registers an application at discord.com/developers and puts its id in nx2navi.ini — and NX2NAVI_DISCORD_IMAGE the
 // key of its uploaded art asset.
 //
 // One host thread owns the connection and never holds a virtual core (kernel.c: host work runs without one). It
@@ -62,7 +62,7 @@ static void read_setting(const char *name, char *out, size_t cap, int (*valid)(c
         return;
     }
     snprintf(out, cap, "%s", cfg_meta(name)->def);
-    rt_log("discord: %s does not fit what the Rich Presence protocol takes; using %s", name + strlen("TOTK_"), out);
+    rt_log("discord: %s does not fit what the Rich Presence protocol takes; using %s", name + strlen("NX2NAVI_"), out);
 }
 
 static void le32(uint8_t *at, uint32_t v) {
@@ -170,7 +170,7 @@ static int send_activity(PlatIpc *p, const char *image) {
     snprintf(json, sizeof json,
              "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%u\",\"args\":{\"pid\":%lu,\"activity\":{\"details\":\"Game "
              "%d.%d.%d \\u00b7 Recomp %.*s\",\"timestamps\":{\"start\":%llu},\"assets\":{\"large_image\":\"%s\","
-             "\"large_text\":\"TotK Recomp %s\"}}}}",
+             "\"large_text\":\"NX2navi %s\"}}}}",
              next_nonce(), (unsigned long)plat_process_id(), v / 100, v / 10 % 10, v % 10, port_len, rt_port_version,
              (unsigned long long)start, image, rt_port_version);
     if (!write_frame(p, OP_FRAME, json)) return 0;
@@ -185,8 +185,8 @@ static void discord_main(void *arg) {
     (void)arg;
     unsigned seen = 0;
     char app_id[APP_ID_CAP], image[IMAGE_KEY_CAP];
-    read_setting("TOTK_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
-    read_setting("TOTK_DISCORD_IMAGE", image, sizeof image, valid_image_key);
+    read_setting("NX2NAVI_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
+    read_setting("NX2NAVI_DISCORD_IMAGE", image, sizeof image, valid_image_key);
     PlatIpc *ipc = NULL;
     uint64_t retry_at = 0, send_at = 0;
     int said_no_client = 0;
@@ -194,12 +194,12 @@ static void discord_main(void *arg) {
         unsigned v = cfg_version();
         if (v != seen) {   // the settings changed (the menu writes them): pick the new ones up at once
             seen = v;
-            read_setting("TOTK_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
-            read_setting("TOTK_DISCORD_IMAGE", image, sizeof image, valid_image_key);
+            read_setting("NX2NAVI_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
+            read_setting("NX2NAVI_DISCORD_IMAGE", image, sizeof image, valid_image_key);
             if (ipc) plat_ipc_close(ipc), ipc = NULL;   // the new app id needs a new handshake; the image is resent
             said_no_client = 0;
         }
-        if (!cfg_bool("TOTK_DISCORD_RPC")) {
+        if (!cfg_bool("NX2NAVI_DISCORD_RPC")) {
             if (ipc) plat_ipc_close(ipc), ipc = NULL;
             plat_sleep_ms(500);
             continue;
@@ -241,8 +241,8 @@ int probe_discord(void) {
     static int fails;
 #define CHECK(c, what) do { if (!(c)) { fails++; fprintf(stderr, "FAIL discord: %s\n", what); } } while (0)
     char app_id[APP_ID_CAP], image[IMAGE_KEY_CAP];
-    read_setting("TOTK_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
-    read_setting("TOTK_DISCORD_IMAGE", image, sizeof image, valid_image_key);
+    read_setting("NX2NAVI_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
+    read_setting("NX2NAVI_DISCORD_IMAGE", image, sizeof image, valid_image_key);
     PlatIpc *p = connect_client(app_id);
     if (!p) {
         fprintf(stderr, "discord: probe skipped: no client on discord-ipc-0..9\n");

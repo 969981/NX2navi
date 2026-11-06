@@ -9,7 +9,7 @@
 +                SpvInstruction localType = context.GetType(local.VarType);
 +                SpvInstruction localPointerType = context.TypePointer(StorageClass.Function, localType);
 +
-+                // TOTK: on hosts that ask for it (Mesa's compilers fold undefined values freely), a register read on a
++                // NX2NAVI: on hosts that ask for it (Mesa's compilers fold undefined values freely), a register read on a
 +                // path that did not write it reads 0 instead of an undefined value.
 +                SpvInstruction spvLocal = context.HostCapabilities.ZeroLocals
 +                    ? context.Variable(localPointerType, StorageClass.Function, context.ConstantNull(localType))
@@ -23,7 +23,7 @@
          // the user output location it went to (-1: none) and the banks the position depends on (bit n: cn).
          bool QueryMotionPrevious() => false;
  
-+        // TOTK: true when function-local variables start at 0 (CodeGen/Spirv/Declarations.cs DeclareLocals).
++        // NX2NAVI: true when function-local variables start at 0 (CodeGen/Spirv/Declarations.cs DeclareLocals).
 +        bool QueryZeroLocals() => false;
 +
          void ReportMotionPrevious(int location, int banks)

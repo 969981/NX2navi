@@ -1,16 +1,16 @@
 #version 450
 // The game's tonemap pass for HDR output (runtime/vk_hdr.c vk_hdr_shader_swap puts it in place of the translated
-// shader when TOTK_HDR=1). Same inputs as the game's: fp_t_tcb_8 (bloom, clamped to 10000 as the game does) plus
+// shader when NX2NAVI_HDR=1). Same inputs as the game's: fp_t_tcb_8 (bloom, clamped to 10000 as the game does) plus
 // fp_t_tcb_A (the scene), weights in c1[0] and the saturation grade in c3[0]. The game maps luminance and each channel
 // with 1 - e^-x, blends the two by the luminance curve squared, clamps to 0..1 and grades saturation. Here the curve is
 // the game's up to PIVOT and a straight line with its slope above, so mid-greys look as in SDR and highlights keep
 // going; the grade works on the colour divided by its largest channel above 1; a roll-off on the largest channel stops
-// at the display's peak. The output is relative to the HUD's white (1.0), which the present maps to TOTK_HDR_UI_NITS.
-// Hue correction (hdr.z, TOTK_HDR_HUE): the game's SDR clamp turns bright saturated colours towards white (a torch flame
+// at the display's peak. The output is relative to the HUD's white (1.0), which the present maps to NX2NAVI_HDR_UI_NITS.
+// Hue correction (hdr.z, NX2NAVI_HDR_HUE): the game's SDR clamp turns bright saturated colours towards white (a torch flame
 // clips red, then green, and reads yellow-white, the colour its emitted light was tuned to); the extended curve keeps
 // their ratios, so they stay saturated. From the picture's white upwards the colour moves towards the game's own SDR
-// result at the HDR luminance, by up to hdr.z (RenoDX's TotK mod has the same control).
-// Approach after RenoDX's TotK mod by souperman9 and Musa (github.com/clshortfuse/renodx, src/games/totk, MIT): its
+// result at the HDR luminance, by up to hdr.z (RenoDX's NX2navi mod has the same control).
+// Approach after RenoDX's NX2navi mod by souperman9 and Musa (github.com/clshortfuse/renodx, src/games/nx2navi, MIT): its
 // "extended vanilla" curve.
 // Bindings are those of the game's translated shader: vk_hdr.c rewrites them from the original's names.
 layout(location = 0) in vec4 uv;

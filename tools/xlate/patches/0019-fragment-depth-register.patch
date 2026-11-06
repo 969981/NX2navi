@@ -6,7 +6,7 @@
          {
 -            // The depth register is always two registers after the last color output.
 -            return BitOperations.PopCount((uint)Definitions.OmapTargets) + 1;
-+            // TOTK: every render target with any component enabled takes four registers (the colour outputs above), then
++            // NX2NAVI: every render target with any component enabled takes four registers (the colour outputs above), then
 +            // the sample mask when written, then one register is skipped. The component count was used, which matches
 +            // only when every enabled target writes all four: Ocarina's depth downsample (targets 0 and 2, .x each) read
 +            // its depth from R3, never written, and wrote 0 (all its fog then sat at the near plane). As yuzu's

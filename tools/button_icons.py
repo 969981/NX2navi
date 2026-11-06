@@ -186,14 +186,14 @@ def xbox_icons(g):
 # ---- keyboard and mouse prompts (--prompts pc): every button the keyboard drives, drawn as the key or mouse button
 # bound to it, in the same filled-shape style. Each glyph keeps the advance of the game's own (a wider glyph runs into
 # the text of a right-aligned guide).
-# The keyboard defaults of runtime/input_map.c (input_map_reset; the totk.ini bind_ lines apply on top, pc_binds). The
+# The keyboard defaults of runtime/input_map.c (input_map_reset; the nx2navi.ini bind_ lines apply on top, pc_binds). The
 # right stick is the camera, which the mouse drives; SHAKE is the key that shakes it (the mouse never does).
 PC_BINDS = {
     'A': 'e', 'B': 'lshift', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',
     'PLUS': 'tab', 'MINUS': 'm', 'LEFT': '1', 'UP': '2', 'RIGHT': '3', 'DOWN': '4', 'LCLICK': 'lctrl', 'RCLICK': 'c',
     'LSTICK_UP': 'w', 'LSTICK_LEFT': 'a', 'LSTICK_DOWN': 's', 'LSTICK_RIGHT': 'd', 'SHAKE': 'g',
 }
-# What a key shows: its letter, a symbol or a short name (key names as in totk.ini; the rest show their name).
+# What a key shows: its letter, a symbol or a short name (key names as in nx2navi.ini; the rest show their name).
 PC_LABELS = {
     'lshift': '⇧', 'rshift': '⇧', 'lctrl': 'CTRL', 'rctrl': 'CTRL', 'lalt': 'ALT', 'tab': 'TAB',
     'enter': 'ENT', 'backspace': 'BKSP', 'capslock': 'CAPS', 'insert': 'INS', 'delete': 'DEL', 'home': 'HOME',
@@ -215,7 +215,7 @@ PC_MOUSE = ('mouse_l', 'mouse_r', 'mouse_m')
 
 
 def pc_binds(ini_text=None):
-    """PC_BINDS with the first key of each bind_<action> line of a totk.ini text over it (a line without a key entry,
+    """PC_BINDS with the first key of each bind_<action> line of a nx2navi.ini text over it (a line without a key entry,
     or with key:default, keeps the default)."""
     binds = dict(PC_BINDS)
     for line in (ini_text or '').splitlines():

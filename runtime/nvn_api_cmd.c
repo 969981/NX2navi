@@ -3,7 +3,7 @@
 // (nvn_submit_prepare, called by nvnQueueSubmitCommands in nvn_api_core.c). Ported from MacNativeGames
 // games/totk/third_party/d2r_gfx/gfx/nvn/hle_nvn.c @ b75be8cf (MIT, Copyright (c) 2026 jhaizhou; origin d2r-mobile),
 // lines 647-1062, 1261-1286, 1486-1760 and 1975-1990, and the *Deferred and memory-callback entry points of
-// totk_nvn_ext.c in the same directory. Metal, mach, the translation thread, Apple diagnostics, the per-frame
+// nx2navi_nvn_ext.c in the same directory. Metal, mach, the translation thread, Apple diagnostics, the per-frame
 // statistics and the copy marks in control memory dropped; the texture pin sweep replaced by counting (texture pins).
 //
 // Records are written into a growable host buffer per command buffer, never into the game's command memory: games hand
@@ -248,7 +248,7 @@ static void copy_view(view_t *dst, uint8_t *has, const NVNtextureView *v) {
 //   the thread that replays them and keeps the pins it is given.
 // MacNativeGames hit the same growth (3.16 million copies, 405 MB after 27 minutes) and marks pins by walking every live
 // recording each window (hle_nvn.c pin_scan); counting at copy and release walks each copy's ops once more, when it is
-// freed. TOTK_PIN_SWEEP=0 keeps every copy.
+// freed. NX2NAVI_PIN_SWEEP=0 keeps every copy.
 typedef struct {
     tex_t t;              // first: ops hold pins as tex_t pointers
     uint64_t last_use;    // nsubmits at the last tex_pin or the last drop of refs
@@ -362,9 +362,9 @@ void nvn_pins_sweep(uint64_t now, const tex_t *const *keep, int nkeep) {
     if (now < NVN_PIN_AGE) return;
     static int on = -1;
     if (on < 0) {
-        const char *s = cfg_get("TOTK_PIN_SWEEP");
+        const char *s = cfg_get("NX2NAVI_PIN_SWEEP");
         on = !(s && !strcmp(s, "0"));
-        if (!on) rt_log("nvn: TOTK_PIN_SWEEP=0: texture pin copies are kept for the run (the heap grows in long sessions)");
+        if (!on) rt_log("nvn: NX2NAVI_PIN_SWEEP=0: texture pin copies are kept for the run (the heap grows in long sessions)");
     }
     if (!on) return;
     static uint64_t logged;
@@ -839,14 +839,14 @@ NVN_API(nvnCommandBufferSetDepthClamp) { REC(cmd_of(c), OP_DEPTH_CLAMP, p_flag)-
 NVN_API(nvnCommandBufferSetRenderEnable) { REC(cmd_of(c), OP_RENDER_ENABLE, p_flag)->value = nvn_arg_bool(c, 1) != 0; }
 // Rasterizer discard runs vertex work without rasterising; with no transform feedback that equals not drawing.
 NVN_API(nvnCommandBufferSetRasterizerDiscard) { REC(cmd_of(c), OP_RASTER_DISCARD, p_flag)->value = nvn_arg_bool(c, 1) != 0; }
-// void nvnCommandBufferSetPrimitiveRestart(NVNcommandBuffer *cmd, NVNboolean enable, int index): TOTK draws its
+// void nvnCommandBufferSetPrimitiveRestart(NVNcommandBuffer *cmd, NVNboolean enable, int index): NX2NAVI draws its
 // terrain and cliff strips with 16-bit indices and restart at 0xffff; the replay applies it per indexed draw (op_draw_idx)
 NVN_API(nvnCommandBufferSetPrimitiveRestart) {
     *REC(cmd_of(c), OP_PRIM_RESTART, p_prim_restart) = (p_prim_restart){nvn_arg_bool(c, 1) != 0, (uint32_t)arg_x(c, 2)};
 }
 // void nvnCommandBufferSetRenderEnableConditional(NVNcommandBuffer *cmd, NVNconditionalRenderMode mode,
 // NVNbufferAddress counters): rendering is enabled when the two NVNcounterData.counter values at addr / addr+16
-// compare equal (mode 0) or not equal (mode 1). TOTK gates most of its ClearColor commands with it; the replay
+// compare equal (mode 0) or not equal (mode 1). NX2NAVI gates most of its ClearColor commands with it; the replay
 // evaluates it in GPU order.
 NVN_API(nvnCommandBufferSetRenderEnableConditional) {
     int m = (int)arg_x(c, 1);

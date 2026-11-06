@@ -10,11 +10,11 @@
 //
 // Events and counters are CPU-visible side effects. Their values go into guest memory on the completion thread through
 // vk_completion_add, in submit order, as gfx_null.c does: event WRITE / ADD, counter {0, timestamp} for every type but
-// samples passed. A timestamp report puts 0 in the counter word: TOTK gates its clears on two such words being unequal.
+// samples passed. A timestamp report puts 0 in the counter word: NX2NAVI gates its clears on two such words being unequal.
 //
 // Samples passed (NVN_COUNTER_TYPE_SAMPLES_PASSED) is a running count on the queue: RESET_COUNTER zeroes it, every
 // draw after it adds the samples that passed the depth and stencil tests, REPORT_COUNTER writes the running value.
-// TOTK resets and reports it 3 to 8 times a frame in the field and its CPU reads the results back (f_70010c3298); a 0
+// NX2NAVI resets and reports it 3 to 8 times a frame in the field and its CPU reads the results back (f_70010c3298); a 0
 // there culls what the query tested. The replay counts with Vulkan occlusion queries ("occlusion counts" below).
 //
 // Conditional rendering is a CPU-side skip, not VK_EXT_conditional_rendering: the extension compares one 32-bit word
@@ -23,7 +23,7 @@
 // as unknown if it is samples passed. An unknown count renders: the report usually sits in the command buffer being
 // recorded, so its value cannot be waited for, and the word in memory still holds an older query's count. Rendering
 // costs at most the work the condition would have saved (MacNativeGames nvn_mtl.m decides the same); in the field
-// TOTK conditions only on timestamp reports. The condition sets VkExec.render_disabled, which vk_exec.c honours for
+// NX2NAVI conditions only on timestamp reports. The condition sets VkExec.render_disabled, which vk_exec.c honours for
 // clears and vk_exec_draw.c for draws and dispatches. A condition that cannot be read (address outside every pool)
 // renders.
 // Copies and CLEAR_TEX are not conditional (as in MacNativeGames, nvn_mtl.m).
@@ -163,7 +163,7 @@ static Pending *pending_slot(uint64_t addr, int insert) {
 //
 // After a SAMPLES_PASSED reset, the first draw of a pass begins an occlusion query (precise when the device has
 // occlusionQueryPrecise); the query ends with the pass, or at the next report or reset of the counter, and the next
-// draw begins another. A Vulkan query begun inside a render pass must end inside it. TOTK always resets, draws the
+// draw begins another. A Vulkan query begun inside a render pass must end inside it. NX2NAVI always resets, draws the
 // tested proxies, reports, so counting stops at a report and restarts at the next reset: queries cover only the draws
 // between the two, not every pass of the frame. Once the game reports twice without a reset in between, counting stays
 // on for good (cumulative NVN semantics; that one report misses the draws since the previous one). The queries closed since the last
@@ -360,7 +360,7 @@ static int counter_word(uint64_t addr, uint64_t *v) {
     return 1;
 }
 
-// The counter type of the newest report to addr the ring still holds, -1 when there is none (TOTK_LOG_RCOND).
+// The counter type of the newest report to addr the ring still holds, -1 when there is none (NX2NAVI_LOG_RCOND).
 static int last_type(uint64_t addr) {
     const Pending *e = pending_slot(addr, 0);
     return e ? e->type : -1;
@@ -375,7 +375,7 @@ static int cond_enabled(const p_render_cond *c) {
     }
     if (rx == 2 || ry == 2) return 1;   // a samples-passed count not done yet
     int on = c->mode == 0 ? x == y : x != y;
-    // TOTK_LOG_RCOND=1: one condition in 499 (up to 300 lines), on or off, with the counter types last reported there
+    // NX2NAVI_LOG_RCOND=1: one condition in 499 (up to 300 lines), on or off, with the counter types last reported there
     static int log_on = -1, nlog;
     static unsigned ncond;
     if (log_on < 0) log_on = rt_knob("LOG_RCOND", "0");
@@ -492,7 +492,7 @@ static void copy_buffer_image(VkExec *ex, const p_copy_b2t *p, int to_image) {
     Sub s;
     if (!sub_resolve(p->tex, &p->view, p->has_view, &p->r, 1, &s)) return;
     if (s.img->scale > 1) {   // the buffer holds the game's texel count, the image more
-        warn_once(W_REGION, "buffer copy of a shadow map enlarged by TOTK_SHADOW_SCALE: skipped");
+        warn_once(W_REGION, "buffer copy of a shadow map enlarged by NX2NAVI_SHADOW_SCALE: skipped");
         return;
     }
     uint64_t size;

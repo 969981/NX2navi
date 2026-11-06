@@ -43,19 +43,19 @@ static int nprocs;
 // Unknown procs (NVN2 names the NVN1-era table lacks): a NVN2 driver has every name the game asks for, so a NULL
 // answer crashes the game at the first call (main+0xc31484 called one). Each unknown name is bound on demand to one
 // of TRAP_COUNT pre-registered traps (the hostfn table is sealed after boot). A trap logs its name and caller on the
-// first call and returns 0 -- a no-op for the setters most of these are; TOTK_NVN_TRAP=fatal stops instead.
+// first call and returns 0 -- a no-op for the setters most of these are; NX2NAVI_NVN_TRAP=fatal stops instead.
 #define TRAP_COUNT 512
 static char trap_name[TRAP_COUNT][96];
 static uint64_t trap_addr[TRAP_COUNT];
 static volatile int32_t trap_called[TRAP_COUNT];
 static int ntraps;
 static void nvn_trap(Cpu *c, int i) {
-    if (!plat_xchg32(&trap_called[i], 1) || (cfg_get("TOTK_NVN_TRAP") && !strcmp(cfg_get("TOTK_NVN_TRAP"), "fatal"))) {
+    if (!plat_xchg32(&trap_called[i], 1) || (cfg_get("NX2NAVI_NVN_TRAP") && !strcmp(cfg_get("NX2NAVI_NVN_TRAP"), "fatal"))) {
         char at[160];
         rt_log("nvn: unimplemented NVN2 proc %s called from %s (x0 %#llx x1 %#llx x2 %#llx x3 %#llx x4 %#llx x5 %#llx): returning 0", trap_name[i],
                ldr_describe(c->x[30], at, sizeof at), (unsigned long long)c->x[0], (unsigned long long)c->x[1],
                (unsigned long long)c->x[2], (unsigned long long)c->x[3], (unsigned long long)c->x[4], (unsigned long long)c->x[5]);
-        const char *mode = cfg_get("TOTK_NVN_TRAP");
+        const char *mode = cfg_get("NX2NAVI_NVN_TRAP");
         if (mode && !strcmp(mode, "fatal")) rt_fatal("nvn: %s is not implemented", trap_name[i]);
     }
     ret_x(c, 0);

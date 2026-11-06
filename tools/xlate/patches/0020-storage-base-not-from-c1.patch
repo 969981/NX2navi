@@ -4,7 +4,7 @@
              // because constant buffer are always encoded as the second operand,
              // so the second operand will always be the one from the last instruction.
  
-+            // TOTK: c1 holds the compiler's constants (BRX jump tables, offsets), never a buffer address; an address
++            // NX2NAVI: c1 holds the compiler's constants (BRX jump tables, offsets), never a buffer address; an address
 +            // that adds one of them to a pointer from another bank (Ocarina's NVN2 compute: a push-constant pointer in
 +            // c0 plus the constant 12 from c1) has the pointer as its base. Taking c1 sent those stores to nothing.
 +            if (src1.Type == OperandType.ConstantBuffer && src2.Type == OperandType.ConstantBuffer &&

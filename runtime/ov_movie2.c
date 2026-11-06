@@ -22,11 +22,11 @@
 // AcquireVideoFrame answers 0x7b when nothing is ready (subsdk0 VideoDecoder::AcquireVideoFrame's own result).
 // The game draws the frame with its own shaders (a YUV compute pass). Each frame is debanded first (flat areas
 // averaged with sub-level precision), so the encoder's flattened gradients (skies, clouds) do not show as hard bands,
-// and written back to NV12 with a 4x4 ordered dither. With TOTK_MOVIE_OVERLAY=1 the host instead shows the frame
+// and written back to NV12 with a 4x4 ordered dither. With NX2NAVI_MOVIE_OVERLAY=1 the host instead shows the frame
 // over the game image (gfx_present.c gfx_movie_frame_own), converted here: BT.709 limited range, bilinear chroma,
-// the same dither. TOTK_MOVIE_DEBAND=0 turns the deband off.
-// TOTK_MOVIES=off skips movies instead (romfs.c movie_skipped); this title then quits, so for testing use
-// TOTK_MOVIE_SKIP=<seconds>: a movie ends as if it had played to its end once its samples reach that time (the next
+// the same dither. NX2NAVI_MOVIE_DEBAND=0 turns the deband off.
+// NX2NAVI_MOVIES=off skips movies instead (romfs.c movie_skipped); this title then quits, so for testing use
+// NX2NAVI_MOVIE_SKIP=<seconds>: a movie ends as if it had played to its end once its samples reach that time (the next
 // sample becomes the end-of-stream marker, later ones are dropped), and the game goes on as after a whole movie.
 #include <dav1d/dav1d.h>
 #include <stdint.h>
@@ -252,10 +252,10 @@ static int make_picture(const Dav1dPicture *pic, Picture *p) {
                    pic->p.bpc, pic->seq_hdr->color_range ? "full" : "limited", pic->seq_hdr->mtrx, pic->seq_hdr->pri,
                    pic->seq_hdr->trc);
     }
-    // The host overlay (TOTK_MOVIE_OVERLAY=1) takes an RGBA frame; without it the game converts the NV12 frame itself.
+    // The host overlay (NX2NAVI_MOVIE_OVERLAY=1) takes an RGBA frame; without it the game converts the NV12 frame itself.
     static int overlay = -1;
     if (overlay < 0) {
-        const char *e = cfg_get("TOTK_MOVIE_OVERLAY");
+        const char *e = cfg_get("NX2NAVI_MOVIE_OVERLAY");
         overlay = e && strcmp(e, "0");
     }
     uint8_t *o = malloc((size_t)w * h * 3 / 2), *rgba = overlay ? malloc((size_t)w * h * 4) : NULL;
@@ -274,11 +274,11 @@ static int make_picture(const Dav1dPicture *pic, Picture *p) {
             uv[(size_t)y * w + 2 * x + 1] = hbd ? (uint8_t)(((const uint16_t *)vv)[x] >> sh) : vv[x];
         }
     }
-    // debanded planes (TOTK_MOVIE_DEBAND=0 keeps the decoded ones), then the overlay's RGBA or the dithered NV12
+    // debanded planes (NX2NAVI_MOVIE_DEBAND=0 keeps the decoded ones), then the overlay's RGBA or the dithered NV12
     {
         static int deband_on = -1;
         if (deband_on < 0) {
-            const char *e = cfg_get("TOTK_MOVIE_DEBAND");
+            const char *e = cfg_get("NX2NAVI_MOVIE_DEBAND");
             deband_on = !(e && !strcmp(e, "0"));
         }
         uint16_t *Y16 = malloc((size_t)w * h * 2), *U16 = malloc((size_t)w * h / 2), *V16 = malloc((size_t)w * h / 2);
@@ -526,11 +526,11 @@ static void ov_decode(Cpu *c) {
     uint32_t flags;
     memcpy(&data, b, 8), memcpy(&size, b + 0x10, 8), memcpy(&ts, b + 0x18, 8), memcpy(&flags, b + 0x20, 4);
     int eos = (flags & BUFFER_FLAG_EOS) != 0;
-    static int64_t skip_ns = -2;   // TOTK_MOVIE_SKIP: -1 off
+    static int64_t skip_ns = -2;   // NX2NAVI_MOVIE_SKIP: -1 off
     if (skip_ns == -2) {
-        const char *e = cfg_get("TOTK_MOVIE_SKIP");
+        const char *e = cfg_get("NX2NAVI_MOVIE_SKIP");
         skip_ns = e && *e ? (int64_t)(atof(e) * 1e9) : -1;
-        if (skip_ns >= 0) rt_log("movie: movies end after %.1f s (TOTK_MOVIE_SKIP)", skip_ns / 1e9);
+        if (skip_ns >= 0) rt_log("movie: movies end after %.1f s (NX2NAVI_MOVIE_SKIP)", skip_ns / 1e9);
     }
     plat_mutex_lock(&v->lock);
     if (skip_ns >= 0 && v->eos_queued) {   // after the early end: what the demuxer still sends is dropped
@@ -638,7 +638,7 @@ static void ov_release(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Skipping movies (TOTK_MOVIES=off) leaves the subsdk0 decoder in place: the movie never opens, so it is not called.
+// Skipping movies (NX2NAVI_MOVIES=off) leaves the subsdk0 decoder in place: the movie never opens, so it is not called.
 #define S(n) "_ZN5movie12VideoDecoder" n
 HOST_OVERRIDE(S("C1Ev"), ov_ctor);
 HOST_OVERRIDE(S("D1Ev"), ov_dtor);

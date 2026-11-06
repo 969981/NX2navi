@@ -5,7 +5,7 @@
 typedef enum {
     // Software keyboard
     UI_SWKBD_TITLE,          // caption of the text-entry window
-    UI_SWKBD_PROMPT,         // prompt when the game gives no header, guide or sub text (TotK names a horse)
+    UI_SWKBD_PROMPT,         // prompt when the game gives no header, guide or sub text (NX2navi names a horse)
     UI_SWKBD_DEFAULT_NAME,   // text the entry starts with when the game gives none, so a controller can confirm it
     UI_SWKBD_OK,
     UI_SWKBD_CANCEL,
@@ -22,7 +22,7 @@ typedef enum {
     UI_MENU_AFTER_RESTART,    // note on a setting that is read at start
     UI_MENU_SET_BY_ENV,       // note on a setting an environment variable fixes
     UI_MENU_SAVE_FAILED,
-    UI_MENU_VERSION,          // "TotK Recomp %s, game %s": the port version and the game update, beside the title
+    UI_MENU_VERSION,          // "NX2navi %s, game %s": the port version and the game update, beside the title
 
     // Screen
     UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC,
@@ -256,12 +256,12 @@ int ui_text_defined(const char *lang, UiTextId id);
 const char *ui_text_lang(const char *switch_code);
 
 // The game languages the F1 menu offers for a game build (rt_game_version): one entry per Mals language file the build
-// ships, each with the Switch code TOTK_LANG takes and the id of its name. 1.4.3 adds Brazilian Portuguese (USpt).
+// ships, each with the Switch code NX2NAVI_LANG takes and the id of its name. 1.4.3 adds Brazilian Portuguese (USpt).
 // Fills out (room for max entries) and returns the count.
 typedef struct { const char *code; UiTextId name; } UiGameLang;
 int ui_text_game_langs(int game_version, UiGameLang *out, int max);
 
-// Menu text: ui_text_in(menu language, id). The menu language is TOTK_MENU_LANG ("en", "ru", "pt-BR", "zh-Hans");
+// Menu text: ui_text_in(menu language, id). The menu language is NX2NAVI_MENU_LANG ("en", "ru", "pt-BR", "zh-Hans");
 // unset, the system UI language when the catalog has menu text for it (English, Russian, Brazilian Portuguese,
 // Simplified Chinese), else English. Follows a live change of the setting.
 const char *menu_text(UiTextId id);

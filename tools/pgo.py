@@ -2,7 +2,7 @@
 
     python tools/pgo.py merge build/v143-pgogen --version v143 [--out build/pgo/pgo-v143.profdata]
 
-An instrumented build (build_game.py --pgo gen) writes <build>/pgo/default_<id>.profraw while totk.exe runs (every
+An instrumented build (build_game.py --pgo gen) writes <build>/pgo/default_<id>.profraw while nx2navi.exe runs (every
 minute and at exit); successive runs of the same exe add to that file. llvm-profdata comes from the llvm-mingw toolchain
 the instrumented build used: its raw format is tied to the compiler version.
 
@@ -47,7 +47,7 @@ def recomp_tree():
 def merge(build, out, version, toolchain):
     raw = sorted((build / 'pgo').glob('*.profraw'))
     if not raw:
-        sys.exit(f'no .profraw in {build / "pgo"}: run the instrumented totk.exe first')
+        sys.exit(f'no .profraw in {build / "pgo"}: run the instrumented nx2navi.exe first')
     tree = recomp_tree()
     if not tree:
         sys.exit('recomp/ has uncommitted changes: the record could not name the generator the profile matches')

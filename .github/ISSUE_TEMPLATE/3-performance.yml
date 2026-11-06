@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: The title line of the settings menu (F1), for example "TotK Recomp 0.1.0, game 1.4.3".
+      description: The title line of the settings menu (F1), for example "NX2navi 0.1.0, game 1.4.3".
     validations:
       required: true
   - type: input
@@ -91,14 +91,14 @@ body:
         2. Play at least three minutes in the place where it happens. The log gets a frame-time summary every 60 s, and a line for every frame over 50 ms that names what the frame waited for.
         3. With the flight recorder on, press F8 right after a hitch. It also saves on its own after every frame longer than the freeze threshold (100 ms), at most once per 10 s.
         4. Close the game with Quit game in the menu or the window's close button. Do not end it from Task Manager: the last summary is written when the game exits.
-        5. Copy `logs\totk.log` from the folder of `totk.exe` before you start the game again.
+        5. Copy `logs\nx2navi.log` from the folder of `nx2navi.exe` before you start the game again.
         6. Each flight recorder save is a folder; the log line `flight: dump` names it. Zip the folders and attach them.
         7. Turn both off again afterwards: they cost a little frame time.
   - type: textarea
     id: log
     attributes:
       label: Log
-      description: Drag totk.log into this field.
+      description: Drag nx2navi.log into this field.
     validations:
       required: true
   - type: textarea

@@ -7,7 +7,7 @@
 // ---- moved from ov.h
 enum { OE_MSG_FOCUS_STATE_CHANGED = 15, OE_MSG_OPERATION_MODE_CHANGED = 30, OE_MSG_PERFORMANCE_MODE_CHANGED = 31 };
 void oe_push_message(uint32_t message);                   // ov_system.c
-void oe_set_focus(int in_focus);                          // ov_system.c: GetCurrentFocusState; TOTK_ASSUME_FOCUS pins 1
+void oe_set_focus(int in_focus);                          // ov_system.c: GetCurrentFocusState; NX2NAVI_ASSUME_FOCUS pins 1
 typedef struct { uint64_t alloc, free, realloc, user; } OvNvAllocator;
 typedef struct { OvNvAllocator graphics, devtools; uint64_t memory, memory_size; int initialized; } OvNvState;
 const OvNvState *ov_nv_state(void);                        // ov_gfx.c
@@ -52,7 +52,7 @@ const GfxShader *gfx_shader_get_async(int stage, const uint8_t *control, const u
 const GfxShader *gfx_shader_await(int stage, const uint8_t *control, const uint8_t *code, uint64_t code_size,
                                   const GfxShaderAnswers *a);
 uint64_t gfx_shader_async_done(void);                      // translations finished by the background worker
-void gfx_shader_counts(uint64_t *keys, uint64_t *translated);   // distinct keys in memory, translations done (TOTK_TRACE=perf)
+void gfx_shader_counts(uint64_t *keys, uint64_t *translated);   // distinct keys in memory, translations done (NX2NAVI_TRACE=perf)
 // Translator answers for this device (vk_caps.c): shaderFloat64, storage offset rounding, subgroup size per vs/fs/cs.
 void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgroup[3], uint32_t gather_bits, int zero_locals);
 const uint8_t *gfx_shader_key(const GfxShader *s);          // the 32-byte cache key (stable while the translator is)
@@ -66,9 +66,9 @@ void gfx_shader_prewarm(const uint8_t (*iids)[32], size_t n, const GfxShader **o
 // to shader-answers.bin, and its program to shader-programs.bin, in the directory of `keys_path` (pipeline-keys.bin).
 void gfx_shader_record_at(const char *keys_path);
 void gfx_shader_record_flush(int force);                   // appends pending records; without force at most every 2 s
-// Translates every recorded (program, answers) on `threads` threads with up to `procs` translators (TOTK_TEST_PREPARE_SHADERS).
+// Translates every recorded (program, answers) on `threads` threads with up to `procs` translators (NX2NAVI_TEST_PREPARE_SHADERS).
 void gfx_shader_prepare_recorded(int threads, int procs);
-// totk.exe --prepare-shaders: translates <dir>/seed-answers.bin + seed-programs.bin (tools/prepare_shaders.py) and
+// nx2navi.exe --prepare-shaders: translates <dir>/seed-answers.bin + seed-programs.bin (tools/prepare_shaders.py) and
 // writes <dir>/shader-prepared.bin (stage, priority, input id per variant). 0 on success.
 int gfx_shader_prepare_seed(const char *dir, int threads, int procs);
 typedef struct { uint8_t iid[32]; uint8_t stage, prio; } GfxWarmEnt;   // prio 0: met in play; 1..3: prepared
@@ -80,7 +80,7 @@ const uint32_t *gfx_shader_spirv(const GfxShader *s, uint64_t *words);
 // A shader of the runtime's own (SPIR-V and a .res.json text as the translator writes them), outside the cache and
 // never freed; its key is the sha256 of both. NULL when the SPIR-V is malformed.
 const GfxShader *gfx_shader_own(const uint32_t *spirv, uint64_t words, const char *res_json);
-// vk_hdr.c: with TOTK_HDR=1, replaces a fragment shader's SPIR-V (malloc'd, *words long) by the HDR tonemap when it is
+// vk_hdr.c: with NX2NAVI_HDR=1, replaces a fragment shader's SPIR-V (malloc'd, *words long) by the HDR tonemap when it is
 // the game's tonemap; gfx_shader.c calls it for every fragment shader entering the cache.
 void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words);
 uint64_t gfx_shader_failures(void);                         // failed translations; feeds GfxStats.shader_failures
@@ -135,7 +135,7 @@ typedef struct {
     void (*cpu_synced)(uint64_t fence);
 } GfxBackend;
 extern const GfxBackend gfx_null_backend, gfx_vulkan_backend;
-const GfxBackend *gfx_backend(void);                       // TOTK_GPU=null|vulkan (default vulkan)
+const GfxBackend *gfx_backend(void);                       // NX2NAVI_GPU=null|vulkan (default vulkan)
 
 // ---- NVN front end (nvn_procs.c)
 void nvn_procs_register(void);                             // hostfn_register every proc; before hostfn_seal (ov_gfx.c)

@@ -1,4 +1,4 @@
-// totk.exe --probe-vkexec: the Vulkan replay, through gfx_vulkan_backend. Sync part: empty
+// nx2navi.exe --probe-vkexec: the Vulkan replay, through gfx_vulkan_backend. Sync part: empty
 // submissions get consecutive fence values; fence_wait and fence_done agree; completion callbacks run in submit order on
 // the completion thread; a guest-memory word a callback writes is visible once fence_wait returns; finish drains every
 // submission; a present of a cleared vk_texture.c image (layout GENERAL) reads back exactly through the swapchain
@@ -128,7 +128,7 @@ static int test_present(const GfxBackend *b, uint8_t *guest, int *w_out, int *h_
 
     uint64_t frames = gfx_stats().frames;
     // the exact colour check needs the bilinear blit: FSR's approximate reciprocals move a flat colour by 1/255
-    plat_setenv("TOTK_UPSCALER", "bilinear");
+    plat_setenv("NX2NAVI_UPSCALER", "bilinear");
     vk_present_capture(1);
     const int crop[4] = {0, 0, TEX_W, TEX_H};
     b->present(&t, crop, 0);
@@ -390,7 +390,7 @@ static uint8_t *draw_prefix(uint8_t *q, prog_t *prog, const pool_t *pool, tex_t 
 // ---- pass marks part (vk_crumbs.c): one submission with a pass of 2 draws into the draw part's target, a dispatch and
 // a pass of 3 draws into a second target. Once its fence is done, the buffer marks must name the last pass as both
 // started and finished, the ring records must hold what the three were, and vk_pass_marks_format (the text
-// vk_device_fault_report logs) must name it. Without VK_AMD_buffer_marker or with TOTK_PASS_CRUMBS=0 it is skipped:
+// vk_device_fault_report logs) must name it. Without VK_AMD_buffer_marker or with NX2NAVI_PASS_CRUMBS=0 it is skipped:
 // NVIDIA's checkpoints can only be read once the device is lost.
 static char marks_text[2048];
 static int marks_skipped;
@@ -744,7 +744,7 @@ static int test_c0(void) {
 }
 
 // A texture in a physical pool's memory that nothing wrote reads zero, as Switch pool memory starts zeroed
-// (TOTK_FIX_ZERO; the driver may return zeros without it, then this is a guard).
+// (NX2NAVI_FIX_ZERO; the driver may return zeros without it, then this is a guard).
 static int test_zero(const GfxBackend *b, uint8_t *guest, int *bytes) {
     pool_t phys = {.magic = NVN_POOL_MAGIC, .flags = 0x189, .mem = (uint8_t *)(uintptr_t)RT_GPU_VA_BASE, .size = 0x100000,
                    .game_mem = guest + 0xA00000};
@@ -936,7 +936,7 @@ static int test_mirror(const GfxBackend *b, uint8_t *guest, int *bytes) {
     return 0;
 }
 
-// A pool of zero bytes (TotK makes some now and then; MacNativeGames hit one on 1.2.1) initialises as an empty pool: no
+// A pool of zero bytes (NX2navi makes some now and then; MacNativeGames hit one on 1.2.1) initialises as an empty pool: no
 // Vulkan buffer or memory (a buffer or import of 0 bytes is invalid usage) and no pool index entry, so a lookup at its
 // address still finds the pool that starts there, before and after the empty pool's Finalize.
 static int test_empty_pool(const GfxBackend *b, uint8_t *guest) {
@@ -1020,15 +1020,15 @@ int probe_vkexec(void) {
            "Downsample 64x64 -> 32x32 within 1 of the 2x2 average, stencil view aspect of D24S8, %d bytes compared)\n",
            nvnx_bytes);
     printf("probe-vkexec: c0 and zero parts passed (c0 tables, dispatch size, point size and base instance at their offsets, "
-           "unbound slots zero; %d bytes of an unwritten physical-pool texture read zero, TOTK_FIX_ZERO=%s)\n",
-           zero_bytes, cfg_value("TOTK_FIX_ZERO"));
+           "unbound slots zero; %d bytes of an unwritten physical-pool texture read zero, NX2NAVI_FIX_ZERO=%s)\n",
+           zero_bytes, cfg_value("NX2NAVI_FIX_ZERO"));
     if (vk_mirror_on)
         printf("probe-vkexec: mirror part passed (B2B and fill in a VRAM mirror written back by the fence, a CPU write "
                "between submissions mirrored, CPU bytes beside a fill kept, %d bytes compared)\n", mirror_bytes);
     else
         printf("probe-vkexec: mirror part skipped (memory mode import)\n");
     if (marks_skipped)
-        printf("probe-vkexec: pass marks part skipped (no VK_AMD_buffer_marker, or TOTK_PASS_CRUMBS=0)\n");
+        printf("probe-vkexec: pass marks part skipped (no VK_AMD_buffer_marker, or NX2NAVI_PASS_CRUMBS=0)\n");
     else
         printf("probe-vkexec: pass marks part passed (pass, dispatch, pass in one submission: the GPU's last started and "
                "finished mark is the last pass, ring records exact); the report reads:\n%s\n", marks_text);

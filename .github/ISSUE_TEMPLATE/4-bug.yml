@@ -32,7 +32,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: The title line of the settings menu (F1), for example "TotK Recomp 0.1.0, game 1.4.3". For the installer, the version of TotK-Setup.
+      description: The title line of the settings menu (F1), for example "NX2navi 0.1.0, game 1.4.3". For the installer, the version of NX2navi-Setup.
     validations:
       required: true
   - type: input
@@ -76,19 +76,19 @@ body:
       value: |
         ### What to attach for your area
 
-        Close the game with Quit game in the menu or the window's close button, then copy `logs\totk.log` from the folder of `totk.exe` before you start the game again.
+        Close the game with Quit game in the menu or the window's close button, then copy `logs\nx2navi.log` from the folder of `nx2navi.exe` before you start the game again.
 
-        **Audio.** Open `totk.ini` in the folder of `totk.exe` and add the line `trace = audio`; when the file already has `trace = perf` (Performance log on), change it to `trace = perf,audio`. Start the game, play at least two minutes where the sound goes wrong and close the game. The log then has an `audio:` line every 5 s with the buffer underruns. Name the output device and how it is connected (speakers, headphones, USB, Bluetooth, HDMI), and attach a short video with sound if you can. Remove the line afterwards.
+        **Audio.** Open `nx2navi.ini` in the folder of `nx2navi.exe` and add the line `trace = audio`; when the file already has `trace = perf` (Performance log on), change it to `trace = perf,audio`. Start the game, play at least two minutes where the sound goes wrong and close the game. The log then has an `audio:` line every 5 s with the buffer underruns. Name the output device and how it is connected (speakers, headphones, USB, Bluetooth, HDMI), and attach a short video with sound if you can. Remove the line afterwards.
 
         **Controls and input.** Name the controller and how it is connected (USB, Bluetooth, Steam Input). Does it also happen with keyboard and mouse?
 
-        **Controls, game logic, anything you can trigger again.** Turn on Input recording (F1, Advanced tab, Diagnostics), restart the game, load a save, make the bug happen and close the game. Attach `input-record.txt` from the logs folder and a zip of the save you loaded: the `profile` folder next to `totk.exe`. The recording replays what you did, so we can see the bug on our machine.
+        **Controls, game logic, anything you can trigger again.** Turn on Input recording (F1, Advanced tab, Diagnostics), restart the game, load a save, make the bug happen and close the game. Attach `input-record.txt` from the logs folder and a zip of the save you loaded: the `profile` folder next to `nx2navi.exe`. The recording replays what you did, so we can see the bug on our machine.
 
-        **Installer.** Attach the newest `install-*.log` from `temp\logs` in the folder of `TotK-Setup.exe` (on Linux: `.setup-temp/logs` in the install folder), and the log file the error message names.
+        **Installer.** Attach the newest `install-*.log` from `temp\logs` in the folder of `NX2navi-Setup.exe` (on Linux: `.setup-temp/logs` in the install folder), and the log file the error message names.
   - type: textarea
     id: log
     attributes:
       label: Log and other files
-      description: Drag totk.log and the files your area asks for into this field.
+      description: Drag nx2navi.log and the files your area asks for into this field.
     validations:
       required: true

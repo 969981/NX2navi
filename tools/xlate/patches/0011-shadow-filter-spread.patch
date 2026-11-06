@@ -18,12 +18,12 @@
 +            return result;
 +        }
 +
-+        // TOTK: the spread of the sun shadow filter. The deferred lighting shaders take the sun shadow as four compares
++        // NX2NAVI: the spread of the sun shadow filter. The deferred lighting shaders take the sun shadow as four compares
 +        // at the receiver ± h on the cascade map, h = 0.5 * c[56].xy (UV) of their lighting block (fp_c9, or fp_c5 in
 +        // some), the same in every cascade. In the near cascade the map is sharp enough that the four copies of an edge
 +        // show apart. In a fragment shader that has a 2D array shadow sampler, reads of element 56 .x and .y from any
 +        // constant buffer but fp_c4 (which holds the cascade matrices, row 56 being cascade 3's depth row) are multiplied
-+        // by the support buffer's shadow_spread.x (runtime/vk_exec_draw.c support_fill, TOTK_SHADOW_SPREAD; 1 keeps the
++        // by the support buffer's shadow_spread.x (runtime/vk_exec_draw.c support_fill, NX2NAVI_SHADOW_SPREAD; 1 keeps the
 +        // game's spread).
 +        private static bool IsShadowSpread(CodeGenContext context, AstOperation load)
 +        {

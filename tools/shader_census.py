@@ -1,4 +1,4 @@
-"""Census of every Maxwell shader in the extracted TotK RomFS and ExeFS, and an offline translation pass.
+"""Census of every Maxwell shader in the extracted NX2navi RomFS and ExeFS, and an offline translation pass.
 
 Port of MacNativeGames games/totk/scripts/prepare_shader_seed.py (inventory, bnsh_shaders, sharcb_shaders, sarc) and the
 package walk of locate_shaders.py @ b75be8cf (MIT, Copyright (c) 2026 MacNativeGames contributors). Differences: no
@@ -34,7 +34,7 @@ from pathlib import Path
 import lz4.block
 
 ROOT = Path(__file__).resolve().parent.parent
-XLATE = ROOT / 'build' / 'xlate' / ('totk_xlate.exe' if os.name == 'nt' else 'totk_xlate')
+XLATE = ROOT / 'build' / 'xlate' / ('nx2navi_xlate.exe' if os.name == 'nt' else 'nx2navi_xlate')
 SPIRV_VAL = Path(r'C:\msys64\ucrt64\bin\spirv-val.exe') if os.name == 'nt' else Path(shutil.which('spirv-val') or '/usr/bin/spirv-val')
 ZSTD = b'\x28\xb5\x2f\xfd'
 # NVN program control section magic, u32 0x98761234 (d2r-mobile dm/gfx/tools/shader_map.py)

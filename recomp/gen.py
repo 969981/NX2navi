@@ -583,7 +583,7 @@ def _emit_chunk(task):
     name, number, path, fns = task
     t0 = time.perf_counter()
     # Test hook: a pool wider than this raises the MemoryError a busy machine does, so the retry can be exercised.
-    limit = os.environ.get('TOTK_LIFT_TEST_OOM_ABOVE')
+    limit = os.environ.get('NX2NAVI_LIFT_TEST_OOM_ABOVE')
     if limit and _W['jobs'] > int(limit) and number % 2 == 1:
         raise MemoryError
     e = _emitter(name)
@@ -637,14 +637,14 @@ def pick_jobs(requested):
     """Worker count and the reason for it: --jobs if given, else the CPU count capped by the free memory."""
     if requested:
         return requested, '--jobs'
-    env = os.environ.get('TOTK_LIFT_JOBS', '').strip()
+    env = os.environ.get('NX2NAVI_LIFT_JOBS', '').strip()
     if env:
         try:
             if int(env) >= 1:
-                return int(env), 'TOTK_LIFT_JOBS'
+                return int(env), 'NX2NAVI_LIFT_JOBS'
         except ValueError:
             pass
-        print(f'ignoring TOTK_LIFT_JOBS={env!r}: not a positive integer', file=sys.stderr, flush=True)
+        print(f'ignoring NX2NAVI_LIFT_JOBS={env!r}: not a positive integer', file=sys.stderr, flush=True)
     cpus = os.cpu_count() or 4
     free = hostmem.available_ram()
     if free is None:

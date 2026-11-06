@@ -11,7 +11,7 @@
          // This is a modified version of the algorithm presented on the paper
          // "Taming Control Flow: A Structured Approach to Eliminating Goto Statements".
 -        public static void Eliminate(GotoStatement[] gotos)
-+        // TOTK: makes the flags RouteOuterExits needs (StructuredProgramContext.NewTemp).
++        // NX2NAVI: makes the flags RouteOuterExits needs (StructuredProgramContext.NewTemp).
 +        [ThreadStatic] private static Func<AggregateType, AstOperand> _newTemp;
 +
 +        public static void Eliminate(GotoStatement[] gotos, Func<AggregateType, AstOperand> newTemp)
@@ -32,7 +32,7 @@
              return newBlock;
          }
  
-+        // TOTK: a loop made here around statements that already hold a break or continue (made by MoveOutward or
++        // NX2NAVI: a loop made here around statements that already hold a break or continue (made by MoveOutward or
 +        // EncloseDoWhile for an enclosing loop) would take them as its own: the break then left only the new loop and
 +        // the enclosing one never ended (a GPU hang in fragment shaders whose light loop holds a BRX switch, lowered to
 +        // compares and branches by AmpereLowering). Each such exit now sets a flag and breaks the new loop; after it the

@@ -1,6 +1,6 @@
 # Adapted from MacNativeGames games/totk/scripts/make_romfs_patches.py @ ebe621d (MIT, Copyright (c) 2026
 # MacNativeGames contributors).
-"""Build the 60 fps RomFS overlay for TotK 1.1.0, 1.2.1 or 1.4.3 (runtime/romfs.c, TOTK_ROMFS_PATCHES).
+"""Build the 60 fps RomFS overlay for NX2navi 1.1.0, 1.2.1 or 1.4.3 (runtime/romfs.c, NX2NAVI_ROMFS_PATCHES).
 
 UI/LayoutArchive/Common.Product.<110 or 140>.Nin_NX_NVN.blarc.zs: the weapon / shield / material quick menus capture the game
 picture for their background when the panes C_CaptureBG_00, C_CaptureClearBG_00 and P_CaptureClearBG_00 become
@@ -13,7 +13,7 @@ left out.
 
 --aspect <w>x<h> (a game resolution of another shape than 16:9, such as 3440x1440 or 1280x800) also lays the UI out
 for that shape (tools/ultrawide_layout.py): menus keep their 16:9 proportions in the middle, full-screen backgrounds
-cover the screen and the HUD moves to the screen's corners (wider) or its top and bottom edges (narrower). totk.exe
+cover the screen and the HUD moves to the screen's corners (wider) or its top and bottom edges (narrower). nx2navi.exe
 loads that overlay from romfs-patches-<w>x<h> when the game resolution is that size (runtime/romfs.c overlay_init);
 the camera's side of it is the patch set aspect (recomp/patches-v121.txt, patches-v143.txt).
 
@@ -40,7 +40,7 @@ from the game's own files on the player's machine, nothing added (tools/button_i
 --xbox-prompts is the older name of --prompts xbox.
 --prompts pc: keyboard and mouse prompts, for prompts = pc (romfs-patches-pc, or romfs-patches-pc-<w>x<h> with
 --aspect): every button of the button font is drawn as the key or mouse button the keyboard defaults put on it
-(button_icons.pc_icons; --binds <totk.ini> takes the first key of its bind_ lines instead), and so are the button
+(button_icons.pc_icons; --binds <nx2navi.ini> takes the first key of its bind_ lines instead), and so are the button
 guide's images (A, B, X, Y, L, ZL and the stick's two). The one-letter panes around the action prompt name the keys
 with one character of the Normal font (E, an arrow for Shift, a bar for Space, L and R for the mouse buttons).
 
@@ -67,7 +67,7 @@ ap.add_argument('--prompts', choices=('xbox', 'xbox-label', 'pc'),
                 help='Xbox button icons in the prompts: xbox for pad_layout = nintendo (A shown as B, X as Y), '
                      'xbox-label for pad_layout = xbox or auto (the face buttons keep their letters), '
                      'pc for the keyboard and mouse')
-ap.add_argument('--binds', type=Path, help='--prompts pc: a totk.ini whose bind_ lines the key icons follow')
+ap.add_argument('--binds', type=Path, help='--prompts pc: a nx2navi.ini whose bind_ lines the key icons follow')
 ap.add_argument('--xbox-prompts', dest='prompts', action='store_const', const='xbox', help='the same as --prompts xbox')
 args = ap.parse_args()
 args.romfs = args.romfs or root / 'build/extracted' / args.version / 'romfs'

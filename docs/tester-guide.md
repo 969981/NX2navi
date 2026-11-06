@@ -1,4 +1,4 @@
-# Tester guide: running TotK Recomp on your GPU
+# Tester guide: running NX2navi on your GPU
 
 This guide is for testing the build on a GPU other than the developer's (AMD RX 9070). You build it from source with
 your own copy of the game and your own console keys. Nothing from the game is in this repository, and nothing you build
@@ -16,8 +16,8 @@ from it may be shared.
 
 1. Follow [building.md](building.md): the toolchain, then build steps 1-6 (Python environments, `config.local.toml`
    with your own paths, extraction, the shader translator, lifting and linking, shader preparation). The result is
-   `build\<ver>\totk.exe`, with `<ver>` the game version you built (`v143` or `v121`).
-2. Check the build without the game: `build\<ver>\totk.exe --selftest` must print a pass.
+   `build\<ver>\nx2navi.exe`, with `<ver>` the game version you built (`v143` or `v121`).
+2. Check the build without the game: `build\<ver>\nx2navi.exe --selftest` must print a pass.
 3. To run the build on another of your machines, package a portable folder ([building.md](building.md), "Portable
    folder"). The folder holds game code: for your own machines only.
 4. The installer ([installer.md](installer.md)) is the other route to a machine without the toolchain: it builds the
@@ -25,25 +25,25 @@ from it may be shared.
 
 ## Run and collect the log
 
-Every run writes its log to `logs\totk.log` next to `totk.exe`; the four runs before it are kept as `totk.1.log` to
-`totk.4.log`, and Open log folder in the settings menu's Advanced tab (F1) shows them. Copy the log before you start the
+Every run writes its log to `logs\nx2navi.log` next to `nx2navi.exe`; the four runs before it are kept as `nx2navi.1.log` to
+`nx2navi.4.log`, and Open log folder in the settings menu's Advanced tab (F1) shows them. Copy the log before you start the
 game again. A file stops at 64 MiB. Started with `2> file`, the game writes its log to that file instead.
 
 From `cmd.exe` in the repository root, with the validation layer on:
 
 ```bat
-set TOTK_VK_VALIDATION=1
-build\<ver>\totk.exe
+set NX2NAVI_VK_VALIDATION=1
+build\<ver>\nx2navi.exe
 ```
 
-`TOTK_VK_VALIDATION=1` turns on the Vulkan validation layer (it comes with the Vulkan SDK). It makes the game slower;
-do one run with it and one without (`set TOTK_VK_VALIDATION=`).
+`NX2NAVI_VK_VALIDATION=1` turns on the Vulkan validation layer (it comes with the Vulkan SDK). It makes the game slower;
+do one run with it and one without (`set NX2NAVI_VK_VALIDATION=`).
 
 If the game stops with a lost device (the log says `device lost` or `VK_ERROR_DEVICE_LOST`), the lines starting with
 `vk: pass marks` name the render pass or dispatch the GPU was running. AMD GPUs write them by default. On an NVIDIA GPU,
-`set TOTK_PASS_CRUMBS=1` (or GPU pass marks: On in the Advanced tab) before the run that reproduces the crash.
+`set NX2NAVI_PASS_CRUMBS=1` (or GPU pass marks: On in the Advanced tab) before the run that reproduces the crash.
 
-The game keeps running behind other windows (`assume_focus = 0` in `totk.ini` pauses it instead). Shaders the preparation did not cover compile on first use, so
+The game keeps running behind other windows (`assume_focus = 0` in `nx2navi.ini` pauses it instead). Shaders the preparation did not cover compile on first use, so
 the first minutes of play can stutter.
 Play into the open field (load a save, walk around for a minute, fight something if you can), then close the window.
 
@@ -51,36 +51,36 @@ Play into the open field (load a save, walk around for a minute, fight something
 
 A laptop with an iGPU and a discrete GPU, or two cards, lists every GPU at the top of the log (`vk: gpu 0: ...`).
 
-- `set TOTK_GPU_NAME=Radeon` picks the first usable GPU whose name contains that text (case does not matter).
-- `set TOTK_GPU_INDEX=1` picks GPU 1 from that list.
+- `set NX2NAVI_GPU_NAME=Radeon` picks the first usable GPU whose name contains that text (case does not matter).
+- `set NX2NAVI_GPU_INDEX=1` picks GPU 1 from that list.
 
 The line `vk: using gpu N: <name>` says which one ran.
 
 ## Mods
 
-Mods and cheats made for the emulators go into `mods/` next to `totk.exe`, one folder per mod. [mods.md](mods.md) covers
+Mods and cheats made for the emulators go into `mods/` next to `nx2navi.exe`, one folder per mod. [mods.md](mods.md) covers
 installing them, their order, code patches, what does not work and what to check when something looks wrong;
 [cheats.md](cheats.md) covers cheat files. The log names every mod at the start (`mods: <name>: ...`); when you
 report a problem with mods, list them with their download links.
 
 ## What to send back
 
-1. `logs\totk.log` from each run. It contains no keys and no game files. The lines that matter most start with
+1. `logs\nx2navi.log` from each run. It contains no keys and no game files. The lines that matter most start with
    `vk caps:` (GPU, driver, features and the fallbacks taken), `vk: gpu`, `validation` and `gfx_shader:`.
 2. GPU model, driver version, CPU, RAM, and whether it is a laptop. Copy system info in the settings menu's Advanced
    tab (F1) puts these and your changed settings on the clipboard. Say which game update you ran.
 3. What you saw: how far it got (menu, loading, field), roughly how smooth it ran, and screenshots of anything wrong
    (black or missing areas, flickering, wrong colours, missing grass). Win+Shift+S is fine.
 4. If it crashed or hung: what you were doing. The log of that run ends with the crash report, so send it whole.
-5. For a bug you can trigger again: a recording of your input (`set TOTK_INPUT_RECORD=input.txt`, see
+5. For a bug you can trigger again: a recording of your input (`set NX2NAVI_INPUT_RECORD=input.txt`, see
    [controls.md](controls.md), "Scripted input") and the save you started from.
 
 ## Steam Deck
 
 Build or install on Linux ([installer.md](installer.md), "Linux release"), in Desktop Mode. The game then runs in either
-mode; for Game Mode, add `totk` from the install folder to Steam as a non-Steam game.
+mode; for Game Mode, add `nx2navi` from the install folder to Steam as a non-Steam game.
 
-The game recognises the Deck (LCD and OLED) and uses its device profile for every setting `totk.ini` does not set:
+The game recognises the Deck (LCD and OLED) and uses its device profile for every setting `nx2navi.ini` does not set:
 fullscreen, the screen's own 1280x800 (16:10: the camera and interface take that shape), the game's own 3D scale,
 vsync and a 40 fps limit. These are starting points, not measurements. What helps most:
 
@@ -93,7 +93,7 @@ vsync and a 40 fps limit. These are starting points, not measurements. What help
    proportions in the middle of the taller screen, the HUD sits at the top and bottom edges, and full-screen
    backgrounds reach them; pre-rendered cutscenes play stretched.
 
-`device_profile = desktop` in `totk.ini` turns the profile off; `deck` turns it on elsewhere, to try the Deck's
+`device_profile = desktop` in `nx2navi.ini` turns the profile off; `deck` turns it on elsewhere, to try the Deck's
 settings on a PC.
 
 ## Switches for the developer's questions
@@ -102,8 +102,8 @@ Only set these when asked; each forces a fallback the build picks by itself on G
 
 | Variable | Effect |
 |---|---|
-| `TOTK_VK_NO_FLOAT64=1` | Translate shaders without 64-bit floats |
-| `TOTK_VK_SSBO_ALIGN=64` | Treat storage buffers as needing 64-byte alignment |
-| `TOTK_VK_SUBGROUP_PIN=0` | Do not pin shaders to 32 lanes; tell the translator the GPU's own subgroup size |
+| `NX2NAVI_VK_NO_FLOAT64=1` | Translate shaders without 64-bit floats |
+| `NX2NAVI_VK_SSBO_ALIGN=64` | Treat storage buffers as needing 64-byte alignment |
+| `NX2NAVI_VK_SUBGROUP_PIN=0` | Do not pin shaders to 32 lanes; tell the translator the GPU's own subgroup size |
 
 Each switch makes the first launch translate every shader again.

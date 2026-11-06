@@ -1,4 +1,4 @@
-// Last frame's object and bone blocks, for per-object motion vectors (TOTK_DLAA_OBJMV, on with DLAA). The banks kept
+// Last frame's object and bone blocks, for per-object motion vectors (NX2NAVI_DLAA_OBJMV, on with DLAA). The banks kept
 // start as c5, c7 and c14 and grow with what the vertex shader variants read (vk_mvprev_want); c7 and c5 are described
 // here, the others follow the same two-copy rule.
 //
@@ -35,7 +35,7 @@
 
 enum { BONES = 2, PLACE = 4, CLOCK = 11, BANKS = 14 };   // NVN binding index: banks c5, c7 and c14; c3..c16
 
-// 16 bytes, so a table of TABLE entries stays in the cache: every scene draw probes it (the bytes of TOTK_MVPREV_CHECK
+// 16 bytes, so a table of TABLE entries stays in the cache: every scene draw probes it (the bytes of NX2NAVI_MVPREV_CHECK
 // live in a table of their own, by entry index, allocated only for the check)
 typedef struct {
     uint64_t addr;   // 0: empty
@@ -49,8 +49,8 @@ static struct {
     int on;          // 1 knob on and DLAA on this frame
     int knob;        // -1 not read
     Seen *t[2];      // this frame's bound blocks, last frame's
-    uint8_t (*bytes[2])[CHECK];   // TOTK_MVPREV_CHECK: the first CHECK bytes of each entry of t[k], NULL without the check
-    int timed;       // TOTK_MVOBJ_TIMES: the summary's times
+    uint8_t (*bytes[2])[CHECK];   // NX2NAVI_MVPREV_CHECK: the first CHECK bytes of each entry of t[k], NULL without the check
+    int timed;       // NX2NAVI_MVOBJ_TIMES: the summary's times
     uint32_t frames;
     Stat st[BANKS];  // per binding index
     uint64_t last[BANKS];   // the block the last scene draw bound per binding index
@@ -79,7 +79,7 @@ int vk_mvprev_on(void) { return P.on > 0; }
 
 void vk_mvprev_want(uint32_t index_mask) {
     static int fixed = -1;
-    if (fixed < 0) fixed = !rt_knob("MVPREV_GROW", "1");   // TOTK_MVPREV_GROW=0: c5, c7 and c14 only (test)
+    if (fixed < 0) fixed = !rt_knob("MVPREV_GROW", "1");   // NX2NAVI_MVPREV_GROW=0: c5, c7 and c14 only (test)
     if (!fixed) P.mask |= index_mask & ((1u << BANKS) - 1);
 }
 
@@ -134,7 +134,7 @@ void vk_mvprev_draw(VkExec *ex) {
 static void mvprev_draw_(VkExec *ex) {
     const VkExecTarget *z = &ex->depth;
     if (!z->image || z->width < DLAA_SCENE_MIN_W || z->format != VK_FORMAT_D32_SFLOAT) return;
-    int check = P.bytes[0] != NULL;   // TOTK_MVPREV_CHECK=1: the summary's checks (3.6 ms a frame)
+    int check = P.bytes[0] != NULL;   // NX2NAVI_MVPREV_CHECK=1: the summary's checks (3.6 ms a frame)
     for (int index = 0; index < BANKS; index++) {
         if (!(P.mask >> index & 1)) continue;
         const p_bind_buf *u = &ex->ubo[0][index];
@@ -186,7 +186,7 @@ void vk_mvprev_frame(void) {
             P.timed = rt_knob("MVOBJ_TIMES", "0");
         }
     }
-    int on = P.knob && cfg_bool("TOTK_DLAA");
+    int on = P.knob && cfg_bool("NX2NAVI_DLAA");
     if (on != (P.on > 0)) {
         P.on = on ? 1 : -1;
         if (P.t[0]) memset(P.t[0], 0, TABLE * sizeof(Seen)), memset(P.t[1], 0, TABLE * sizeof(Seen));

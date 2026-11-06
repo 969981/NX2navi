@@ -6,10 +6,10 @@
 // Per 5 ms frame the render thread (audren.c, renderer lock held) decodes every started voice (PCM8/16/24/32, float,
 // DSP-ADPCM) along the sample path the voice clock consumes, resamples it linearly, runs the voice biquads, scales it
 // into its destination mix, folds the submixes, runs the mix effects and writes the device sink's mix (stereo, or 5.1
-// with TOTK_AUDIO_CHANNELS, output_channels) into a single-producer single-consumer ring. The SDL audio thread drains
+// with NX2NAVI_AUDIO_CHANNELS, output_channels) into a single-producer single-consumer ring. The SDL audio thread drains
 // that ring without taking any lock: an empty ring
-// plays silence and never blocks the render thread or the guest. TOTK_AUDIO=none (or TOTK_AUDIO_OFF) mixes without a
-// device; TOTK_AUDIO_PREFILL_MS (0..500, default 20, 60 on Linux) is the queued audio the output waits for after start or underrun.
+// plays silence and never blocks the render thread or the guest. NX2NAVI_AUDIO=none (or NX2NAVI_AUDIO_OFF) mixes without a
+// device; NX2NAVI_AUDIO_PREFILL_MS (0..500, default 20, 60 on Linux) is the queued audio the output waits for after start or underrun.
 // The device's clock paces the render thread, as the audio hardware paces the Switch's DSP (audio_mixer_pace_ns): a
 // frame is rendered when the ring holds less than the output target, max(prefill, two device periods), so the queue and
 // the delay from the game to the speakers stay there and the host and device clocks cannot drift apart. LASRecomp and
@@ -71,7 +71,7 @@ typedef struct Mixer {
 
 static _Atomic float device_volume = 1.0f;
 
-// TOTK_VOLUME: the player's volume in percent (0..100) on top of the game's own; a live setting (the
+// NX2NAVI_VOLUME: the player's volume in percent (0..100) on top of the game's own; a live setting (the
 // menu), parsed again when cfg_version changes. Render thread only.
 static float host_volume(void) {
     static float v = 1.0f;
@@ -79,7 +79,7 @@ static float host_volume(void) {
     unsigned ver = cfg_version();
     if (ver == seen) return v;
     seen = ver;
-    double pct = cfg_double("TOTK_VOLUME");
+    double pct = cfg_double("NX2NAVI_VOLUME");
     v = (float)((pct < 0 ? 0 : pct > 100 ? 100 : pct) / 100);
     return v;
 }
@@ -91,7 +91,7 @@ static void report_once(Mixer *m, unsigned bit, const char *msg, int value) {
 }
 
 // ---- output: SDL3 audio stream fed from the ring
-// How much audio the output waits for before it starts, and again after an underrun: TOTK_AUDIO_PREFILL_MS rounded up
+// How much audio the output waits for before it starts, and again after an underrun: NX2NAVI_AUDIO_PREFILL_MS rounded up
 // to whole 5 ms render blocks. Returns -1 for a value outside 0..500 ms.
 // The Linux default is higher: at 20 ms PipeWire's queue (max(prefill, two 1024-sample periods)) underran
 // thousands of times within minutes in busy scenes, and 60 ms removed the underruns.
@@ -108,23 +108,23 @@ static int prefill_blocks_for(const char *e) {
     return (int)ceil(ms / 5.0);
 }
 
-// TOTK_AUDIO_CHANNELS: the output channels of this run, decided once. stereo gives 2; 5.1 gives 6 (FL FR C LFE RL RR,
+// NX2NAVI_AUDIO_CHANNELS: the output channels of this run, decided once. stereo gives 2; 5.1 gives 6 (FL FR C LFE RL RR,
 // the device sink's order and SDL's); auto gives 6 when the default playback device has at least six channels (a 5.1
 // or 7.1 speaker setup in Windows; SDL places 5.1 on 7.1) and 2 otherwise. IAudioDevice reports the same count to the
-// game (GetActiveChannelCount), which picks its sink layout from it. TOTK_AUDIO=none: 2, without touching SDL.
+// game (GetActiveChannelCount), which picks its sink layout from it. NX2NAVI_AUDIO=none: 2, without touching SDL.
 static int output_channels(void) {
     static _Atomic int decided;
     int n = atomic_load(&decided);
     if (n) return n;
-    const char *want = cfg_value("TOTK_AUDIO_CHANNELS"), *mode = cfg_get("TOTK_AUDIO");
-    if ((mode && !strcmp(mode, "none")) || cfg_get("TOTK_AUDIO_OFF")) n = 2;
+    const char *want = cfg_value("NX2NAVI_AUDIO_CHANNELS"), *mode = cfg_get("NX2NAVI_AUDIO");
+    if ((mode && !strcmp(mode, "none")) || cfg_get("NX2NAVI_AUDIO_OFF")) n = 2;
     else if (!strcmp(want, "5.1")) n = 6;
     else if (!strcmp(want, "stereo")) n = 2;
     else {
         SDL_AudioSpec dev = {0};
         n = SDL_InitSubSystem(SDL_INIT_AUDIO) && SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &dev, NULL) &&
             dev.channels >= 6 ? 6 : 2;
-        rt_log("audio: TOTK_AUDIO_CHANNELS=auto: the default device has %d channels, output %s", dev.channels,
+        rt_log("audio: NX2NAVI_AUDIO_CHANNELS=auto: the default device has %d channels, output %s", dev.channels,
                n == 6 ? "5.1" : "stereo");
     }
     int expected = 0;
@@ -208,9 +208,9 @@ static void SDLCALL sdl_pull(void *user, SDL_AudioStream *stream, int additional
 }
 
 static void output_open(Mixer *m, int rate) {
-    const char *mode = cfg_get("TOTK_AUDIO");
-    if ((mode && !strcmp(mode, "none")) || cfg_get("TOTK_AUDIO_OFF")) {
-        rt_log("audio: TOTK_AUDIO=none: mixing without a device");
+    const char *mode = cfg_get("NX2NAVI_AUDIO");
+    if ((mode && !strcmp(mode, "none")) || cfg_get("NX2NAVI_AUDIO_OFF")) {
+        rt_log("audio: NX2NAVI_AUDIO=none: mixing without a device");
         return;
     }
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
@@ -271,7 +271,7 @@ static void output_push(Mixer *m, const float *out, int frames) {
     if (!m->device_ok) atomic_store(&m->rd, wr + (uint64_t)frames);   // no device: the ring only keeps the latest frames
 }
 
-// TOTK_AUDIO_DUMP=<path>: the sink mix before the clamp as raw interleaved float32 stereo, and every 5 s one log line with
+// NX2NAVI_AUDIO_DUMP=<path>: the sink mix before the clamp as raw interleaved float32 stereo, and every 5 s one log line with
 // how many frames were rendered less than 1 ms after the one before (a burst refill). File writes on the render thread:
 // for diagnosis only.
 static void sink_dump(const float *raw, int frames) {
@@ -280,7 +280,7 @@ static void sink_dump(const float *raw, int frames) {
     static uint64_t last, window_start, total, bursts;
     if (!opened) {
         opened = 1;
-        const char *path = cfg_get("TOTK_AUDIO_DUMP");
+        const char *path = cfg_get("NX2NAVI_AUDIO_DUMP");
         if (path && *path) f = fopen(path, "wb");
     }
     if (!f) return;
@@ -299,7 +299,7 @@ static void sink_dump(const float *raw, int frames) {
     }
 }
 
-// Level meter (TOTK_TRACE=audio): one line per 5 s of output, and the first nonzero frame.
+// Level meter (NX2NAVI_TRACE=audio): one line per 5 s of output, and the first nonzero frame.
 static void level_note(AudioRenderer *r, Mixer *m, const float *out, int frames) {
     if (!(rt_trace & RT_TRACE_AUDIO)) return;
     int sound = 0;
@@ -354,10 +354,10 @@ void audio_mixer_open(AudioRenderer *r) {
     m->sink_written = calloc(sinks, sizeof(uint32_t));
     if (!m->sink_address || !m->sink_size || !m->sink_offset || !m->sink_old || !m->sink_written)
         rt_fatal("audio sink state allocation");
-    const char *pe = cfg_get("TOTK_AUDIO_PREFILL_MS");
+    const char *pe = cfg_get("NX2NAVI_AUDIO_PREFILL_MS");
     m->prefill = prefill_blocks_for(pe);
     if (m->prefill < 0) {
-        rt_log("audio: TOTK_AUDIO_PREFILL_MS=%s is not 0..500 ms: using %d", pe, PREFILL_DEFAULT_MS);
+        rt_log("audio: NX2NAVI_AUDIO_PREFILL_MS=%s is not 0..500 ms: using %d", pe, PREFILL_DEFAULT_MS);
         m->prefill = PREFILL_DEFAULT_MS / 5;
     }
     m->channels = output_channels();
@@ -423,7 +423,7 @@ static void splitters_update(AudioRenderer *r, const uint8_t *p, uint32_t n) {
         SplitInfo *s = &m->split[h[1]]; free(s->ids);
         s->ndest = (int32_t)h[3]; s->ids = calloc(h[3] ? h[3] : 1, sizeof(int32_t));
         if (!s->ids) rt_fatal("audio splitter destinations");
-        memcpy(s->ids, p + at, 4u * h[3]); at += 4u * h[3] + 12;   /* 12 reserved bytes follow the ids (measured, TOTK REV11) */
+        memcpy(s->ids, p + at, 4u * h[3]); at += 4u * h[3] + 12;   /* 12 reserved bytes follow the ids (measured, NX2NAVI REV11) */
         if (at > n) rt_fatal("audio splitter info padding overruns section");
         for (uint32_t k = 0; k < h[3]; k++) if (s->ids[k] < 0 || s->ids[k] >= m->ndest) rt_fatal("audio splitter destination id");
     }
@@ -913,7 +913,7 @@ void audio_mixer_render(AudioRenderer *r, double seconds) {
                 s[1] = ff * (ch[1] ? ch[1][k] : 0) + cf * C + sf * (ch[5] ? ch[5][k] : 0);
             } else if (sink->input_count >= 2) { s[0] = ch[0] ? ch[0][k] : 0; s[1] = ch[1] ? ch[1][k] : 0; }
             else s[0] = s[1] = ch[0] ? ch[0][k] : 0;
-            raw[2 * k] = s[0] * gain; raw[2 * k + 1] = s[1] * gain;   /* TOTK_AUDIO_DUMP: the front pair before clipping */
+            raw[2 * k] = s[0] * gain; raw[2 * k + 1] = s[1] * gain;   /* NX2NAVI_AUDIO_DUMP: the front pair before clipping */
             for (int c = 0; c < oc; c++) {
                 float x = s[c] * gain;
                 out[oc * k + c] = x > 1 ? 1 : x < -1 ? -1 : x;

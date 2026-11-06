@@ -1,6 +1,6 @@
 # Cheats
 
-The port reads Atmosphère cheat files, the format Switch homebrew and the emulators use. It ships no cheat files: a cheat file goes into a mod in the `mods` folder next to `totk.exe`, like any other mod ([mods.md](mods.md)). Open the menu (F1) and switch the cheats on the Cheats tab. The switches are saved under `[cheats]` in `totk.ini`.
+The port reads Atmosphère cheat files, the format Switch homebrew and the emulators use. It ships no cheat files: a cheat file goes into a mod in the `mods` folder next to `nx2navi.exe`, like any other mod ([mods.md](mods.md)). Open the menu (F1) and switch the cheats on the Cheats tab. The switches are saved under `[cheats]` in `nx2navi.ini`.
 
 ## Adding a cheat file
 
@@ -11,7 +11,7 @@ The port reads Atmosphère cheat files, the format Switch homebrew and the emula
    | 1.2.1 | `9B4E43650501A4D4.txt` |
    | 1.4.3 | `277178B7DBA1B6D4.txt` |
 
-   The Cheats tab names the file the installed game reads when no mod holds one, and `logs\totk.log` says `cheats: no enabled mod holds cheats/<id>.txt`.
+   The Cheats tab names the file the installed game reads when no mod holds one, and `logs\nx2navi.log` says `cheats: no enabled mod holds cheats/<id>.txt`.
 2. Put it in the `cheats` folder of a mod, a folder of its own under `mods`:
 
    ```
@@ -23,7 +23,7 @@ The port reads Atmosphère cheat files, the format Switch homebrew and the emula
 
    A download laid out for the Switch's SD card or an emulator works as it is: unpack it into a folder of its own under `mods`, and the port finds `atmosphere\contents\0100F2C0115B6000\cheats`, `contents\0100F2C0115B6000\cheats` or `0100F2C0115B6000\cheats` inside it. The file name's case does not matter.
 3. Start the game. Cheats that write the game's memory work now.
-4. Cheats that change the game's code need the game rebuilt with them. When the game starts and finds such cheats it did not build, it opens the setup's rebuild window, which builds them in (a few minutes; the shaders stay prepared) and starts the game again. Until then they are greyed out with "after the rebuild". When the rebuild fails or you cancel it, the game starts without them and does not try again for the same cheats; "Rebuild the game now" on the Cheats tab tries again. `mods_rebuild = off` under `[mods]` in `totk.ini` turns the automatic rebuild off; running `TotK-Setup.exe` on the same folder does the same job by hand. Saves and settings are kept.
+4. Cheats that change the game's code need the game rebuilt with them. When the game starts and finds such cheats it did not build, it opens the setup's rebuild window, which builds them in (a few minutes; the shaders stay prepared) and starts the game again. Until then they are greyed out with "after the rebuild". When the rebuild fails or you cancel it, the game starts without them and does not try again for the same cheats; "Rebuild the game now" on the Cheats tab tries again. `mods_rebuild = off` under `[mods]` in `nx2navi.ini` turns the automatic rebuild off; running `NX2navi-Setup.exe` on the same folder does the same job by hand. Saves and settings are kept.
 5. Switch the cheats on the Cheats tab of the menu.
 
 The Cheats tab lists the cheats grouped by mod, in the order of the Mods tab. A mod switched off on the Mods tab, or one the port cannot use, contributes no cheats; the change applies at the next start. The Mods tab says how many cheats each mod brought.
@@ -71,4 +71,4 @@ Not supported, and shown greyed out with the reason:
 - code writes mixed with other opcodes, except the button pattern above;
 - code writes that change the CPU flags differently from the game's instruction, or code caves with branches or pc-relative instructions.
 
-`build-cache\cheats.status` next to `totk.exe`, written by the setup, records which cheats were built and how; the log line `cheats: ...` sums them up at start. When the code cheats cannot be built, the setup warns and installs the game without them.
+`build-cache\cheats.status` next to `nx2navi.exe`, written by the setup, records which cheats were built and how; the log line `cheats: ...` sums them up at start. When the code cheats cannot be built, the setup warns and installs the game without them.

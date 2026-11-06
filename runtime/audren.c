@@ -357,7 +357,7 @@ static void render_thread(void *p) {
     // the game's audio thread works in between; AUX effects need that time to fill the return ring, or mix_aux
     // reads stale samples and the frame clicks at its seams. Device-paced frames stay at least 4/5 of a frame
     // apart, which still refills a period well before the device drains it. Linux only: on Windows SDL pulls
-    // 480-sample periods, and a sink dump (TOTK_AUDIO_DUMP) of the bursts there showed no more seam spikes than
+    // 480-sample periods, and a sink dump (NX2NAVI_AUDIO_DUMP) of the bursts there showed no more seam spikes than
     // chance, so a wait on this thread buys nothing.
 #ifdef __linux__
     const uint64_t gap_ns = frame_ns * 4 / 5;

@@ -26,8 +26,8 @@ static VkCommandBuffer rec_cb;         // the part being recorded (set while the
 static int rec_live;                   // producer: rec_begin started the recorder for rec_cb
 static PlatThread *rec_thread;
 static int rec_prio;                   // the submitting thread's priority, which the recorder takes
-static int rec_chk;                    // TOTK_REC_CHECK (rec_check_handle)
-static uint64_t rec_delay_ns;          // TOTK_REC_DELAY_US (rec_main)
+static int rec_chk;                    // NX2NAVI_REC_CHECK (rec_check_handle)
+static uint64_t rec_delay_ns;          // NX2NAVI_REC_DELAY_US (rec_main)
 static volatile uint64_t part_h0;      // put_h at rec_begin: where the packets of the part being recorded start
 static volatile uint64_t part_fence;   // the value of the part being recorded (rec_begin)
 
@@ -69,8 +69,8 @@ static void rec_main(void *arg) {
                 continue;
             }
         }
-        // TOTK_REC_DELAY_US (debug): the recorder falls this far behind each batch it finds, as on a slow machine,
-        // so objects the replay lets go of meet packets it has not made yet (TOTK_REC_CHECK).
+        // NX2NAVI_REC_DELAY_US (debug): the recorder falls this far behind each batch it finds, as on a slow machine,
+        // so objects the replay lets go of meet packets it has not made yet (NX2NAVI_REC_CHECK).
         if (rec_delay_ns) plat_sleep_ns(rec_delay_ns);
         for (int k = 0; t != h; k++) {
             uint64_t w = ring[t % RING_WORDS];
@@ -112,7 +112,7 @@ static void *put(uint32_t op, size_t bytes) {
     wait_space(n);
     ring[pos] = (uint64_t)op | n << 32;
     // Packers reserve room for optional arrays they may leave unwritten (BeginRendering's depth and stencil); with
-    // TOTK_REC_CHECK those words would still hold handles from the ring's previous lap.
+    // NX2NAVI_REC_CHECK those words would still hold handles from the ring's previous lap.
     if (rec_chk) memset(&ring[pos + 1], 0, (n - 1) * 8);
     put_h += n;
     RS_.packets++, RS_.words += n;
@@ -143,16 +143,16 @@ void rec_begin(VkCommandBuffer cb, uint64_t fence) {
         // or VK_ERROR_DEVICE_LOST with a breadcrumb naming a part of a replay submission, and vk_recorder = 0 gets
         // past it). Keeping objects until their submission completed and ending a part from the recorder
         // (rec_end_cb) fixed the white scene on an RX 6700 XT, but not this: 0.2.8 turned the recorder on for every
-        // GPU and the AMD reports came back the same day. TOTK_VK_RECORDER=1 turns it on for an A/B run.
-        const char *set = cfg_get("TOTK_VK_RECORDER");
+        // GPU and the AMD reports came back the same day. NX2NAVI_VK_RECORDER=1 turns it on for an A/B run.
+        const char *set = cfg_get("NX2NAVI_VK_RECORDER");
         mode = rt_knob("VK_RECORDER", vk_caps.amd ? "0" : "1");
         if (!mode && vk_caps.amd && !(set && *set))
-            rt_log("vk_rec: no recorder thread on AMD GPUs (TOTK_VK_RECORDER=1 turns it on)");
+            rt_log("vk_rec: no recorder thread on AMD GPUs (NX2NAVI_VK_RECORDER=1 turns it on)");
         if (mode) {
             plat_event_init(&wake_ev, 0, 0);
             rec_prio = plat_thread_priority_get();
             rec_chk = rt_knob("REC_CHECK", "0");   // debug switches, read before the recorder starts
-            const char *d = cfg_get("TOTK_REC_DELAY_US");
+            const char *d = cfg_get("NX2NAVI_REC_DELAY_US");
             rec_delay_ns = d && *d && atoi(d) > 0 ? (uint64_t)atoi(d) * 1000 : 0;
             rec_thread = plat_thread_new(rec_main, NULL, "vk recorder");
             if (!rec_thread) {
@@ -160,9 +160,9 @@ void rec_begin(VkCommandBuffer cb, uint64_t fence) {
                 mode = 0;
             } else {
                 rt_log("vk_rec: the replay's Vulkan commands are made by a recorder thread%s",
-                       mode == 2 ? " in the B blocks (TOTK_AB)" : "");
-                if (rec_chk) rt_log("vk_rec: TOTK_REC_CHECK: deferred and destroyed objects are searched in the ring");
-                if (rec_delay_ns) rt_log("vk_rec: TOTK_REC_DELAY_US: the recorder waits %llu us before each batch",
+                       mode == 2 ? " in the B blocks (NX2NAVI_AB)" : "");
+                if (rec_chk) rt_log("vk_rec: NX2NAVI_REC_CHECK: deferred and destroyed objects are searched in the ring");
+                if (rec_delay_ns) rt_log("vk_rec: NX2NAVI_REC_DELAY_US: the recorder waits %llu us before each batch",
                                          (unsigned long long)(rec_delay_ns / 1000));
             }
         }
@@ -182,11 +182,11 @@ void rec_end(void) {
     rec_live = 0;
 }
 
-// TOTK_REC_END (default 1): the thread that recorded the part also ends it, after the breadcrumb crumb (kind 0: none)
+// NX2NAVI_REC_END (default 1): the thread that recorded the part also ends it, after the breadcrumb crumb (kind 0: none)
 // that vk_sync.c writes at the end of a submission. On an RX 6700 XT (driver 26.10.1, issue #5) parts the recorder
 // recorded and the submitting thread ended broke when a submission was split (vk_sync.c vk_sync_split): the GPU hung
 // or the scene turned green, then white. The handoff in rec_drain orders the two threads, so Vulkan allows the old
-// split; the driver did not cope with it. TOTK_REC_END=0 brings the old split back.
+// split; the driver did not cope with it. NX2NAVI_REC_END=0 brings the old split back.
 // The line is written only when a part was recorded by the recorder: with the recorder off (the default on AMD) the
 // switch changes nothing, and reports read an unconditional line as proof that the recorder was running (#315).
 typedef struct { int kind; uint64_t n; } A_EndCb;
@@ -195,7 +195,7 @@ int rec_end_cb(VkCommandBuffer cb, int crumb, uint64_t n) {
     if (mode < 0) mode = rt_knob("REC_END", "1");
     if (rec_live && cb == rec_cb && !said) {
         said = 1;
-        rt_log("vk_rec: a part the recorder records is ended by %s (TOTK_REC_END=%d)",
+        rt_log("vk_rec: a part the recorder records is ended by %s (NX2NAVI_REC_END=%d)",
                mode ? "the recorder" : "the submitting thread", mode);
     }
     if (!rec_live || cb != rec_cb || !mode) {
@@ -221,7 +221,7 @@ void rec_stats_log(void) {
     memset(&RS_, 0, sizeof RS_);
 }
 
-// TOTK_REC_CHECK=1 (debug, recorder on): the packets of the part being recorded are searched word by word for an object
+// NX2NAVI_REC_CHECK=1 (debug, recorder on): the packets of the part being recorded are searched word by word for an object
 // vk_memory.c lets go of. put() zeroes each packet's room, so only words a packer wrote can match. A hit is a hazard
 // - at a deferral (destroy 0) when the stamp tl is below the part's value: vk_memory.c collect_locked may destroy the
 //   object once the GPU reaches tl, before the part ran and, with the recorder behind, before it made the call;

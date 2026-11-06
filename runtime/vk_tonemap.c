@@ -12,7 +12,7 @@
 // The game's upscaler (tensor-core, untranslatable) also tonemaps: its input is the HDR scene in RGB9E5 (values up to a
 // few hundred), its output the display picture the HUD is drawn over, and the present after it only converts to sRGB.
 // A plain blit left the picture white. This pass (shaders/fallback_tonemap.spvasm) scales with linear filtering and
-// maps the colour, times TOTK_FALLBACK_EXPOSURE (default 0.04), through Narkowicz's ACES fit. Not the game's own curve
+// maps the colour, times NX2NAVI_FALLBACK_EXPOSURE (default 0.04), through Narkowicz's ACES fit. Not the game's own curve
 // or auto exposure: those live in the shader we cannot run.
 static struct {
     int tried, ok;
@@ -95,7 +95,7 @@ static int tm_init(void) {
         ok = vkCreateComputePipelines(c->device, VK_NULL_HANDLE, 1, &ci, NULL, &TM.pipe) == VK_SUCCESS;
     }
     if (m) vkDestroyShaderModule(c->device, m, NULL);
-    rt_log("vk_exec: upscaler stand-in: %s", ok ? "tonemap pass (TOTK_FALLBACK_EXPOSURE)" : "blit (the tonemap pass could not be created)");
+    rt_log("vk_exec: upscaler stand-in: %s", ok ? "tonemap pass (NX2NAVI_FALLBACK_EXPOSURE)" : "blit (the tonemap pass could not be created)");
     return TM.ok = ok;
 }
 
@@ -115,14 +115,14 @@ static VkImageView tm_view(VkImage img, VkFormat f) {
 // Records the pass from src (sampled) into the pass's own RGBA16F image of dw x dh and returns it (the caller blits it
 // into the target); VK_NULL_HANDLE when it cannot (the caller blits the source instead).
 VkImage vk_tonemap_record(VkCommandBuffer cb, VkImage src, VkFormat sf, uint32_t dw, uint32_t dh) {
-    static int disp = -1;   // TOTK_TM_DISPATCH=0: everything but the dispatch, =2: not at all (diagnosis)
+    static int disp = -1;   // NX2NAVI_TM_DISPATCH=0: everything but the dispatch, =2: not at all (diagnosis)
     if (disp < 0) disp = rt_knob("TM_DISPATCH", "1");
     if (disp == 2 || !tm_init() || !tm_out(cb, dw, dh)) return VK_NULL_HANDLE;
     VkImageView sv = tm_view(src, sf), dv = TM.out_view;
     if (!sv) return VK_NULL_HANDLE;
     static float exposure = -1;
     if (exposure < 0) {
-        const char *e = cfg_get("TOTK_FALLBACK_EXPOSURE");
+        const char *e = cfg_get("NX2NAVI_FALLBACK_EXPOSURE");
         exposure = e && *e ? (float)atof(e) : 0.04f;
     }
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,

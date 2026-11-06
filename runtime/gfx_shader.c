@@ -1,7 +1,7 @@
 // Shader service client: turns an NVN program (control section, code, c1 constants and the
-// translator's answers) into SPIR-V plus reflection through `totk_xlate.exe --serve` children, started lazily with
-// pipes and kept for the life of the process (a pool: TOTK_XLATE_PROCS at run time, more for the boot prewarm).
-// Results are cached in memory and on disk (shader-cache/<key>.spv and <key>.res.json next to totk.exe), so a shader
+// translator's answers) into SPIR-V plus reflection through `nx2navi_xlate.exe --serve` children, started lazily with
+// pipes and kept for the life of the process (a pool: NX2NAVI_XLATE_PROCS at run time, more for the boot prewarm).
+// Results are cached in memory and on disk (shader-cache/<key>.spv and <key>.res.json next to nx2navi.exe), so a shader
 // is translated once per machine and translator.
 //
 // Keys. The code hash is sha256 over stage (u32), the 0x880-byte control section, code_size (u64), the code, the c1
@@ -13,8 +13,8 @@
 // key is sha256 over "TKSK", KEY_VERSION, the translator identity and the input id. A code hash without a known mask is
 // translated under a provisional key ("TKSP", full answers); its files are renamed to the cache key and the mask stored.
 //
-// Translator identity: build/xlate/totk_xlate.id, sha256 hex that tools/build_xlate.py writes over the sources it
-// builds from (Program.cs, the csproj, the patches, the vendor tree); without it the sha256 of the exe. TOTK_XLATE_ID
+// Translator identity: build/xlate/nx2navi_xlate.id, sha256 hex that tools/build_xlate.py writes over the sources it
+// builds from (Program.cs, the csproj, the patches, the vendor tree); without it the sha256 of the exe. NX2NAVI_XLATE_ID
 // (64 hex digits) overrides it. A translator change therefore changes every cache key without a hand-made KEY_VERSION
 // bump; KEY_VERSION is for changes on this side (key layout, how the output is used).
 //
@@ -31,9 +31,9 @@
 // Reflection: every shader that enters the cache has its .res.json parsed into GfxShaderRes arrays and its SPIR-V
 // scanned for interface Locations and the workgroup size (gfx.h accessors at the end of the file).
 //
-// Provenance: the c2 handle ranges of handle_slot are those of MacNativeGames' totk_xlate Service.cs (MIT).
+// Provenance: the c2 handle ranges of handle_slot are those of MacNativeGames' nx2navi_xlate Service.cs (MIT).
 // The code layout the translator sees (graphics: code[0x30..], compute: code[0..]; c1 = code[c1..length]
-// with c1 and length at control+0x700) follows tools/shader_census.py, itself MacNativeGames' totk shader tooling (MIT).
+// with c1 and length at control+0x700) follows tools/shader_census.py, itself MacNativeGames' nx2navi shader tooling (MIT).
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -247,12 +247,12 @@ static int hex32(const char *h, uint8_t out[32]) {        // 64 hex digits, then
     return 1;
 }
 
-// TOTK_XLATE_ID (64 hex digits, or any other text, which is hashed), else <translator>.id next to the exe
+// NX2NAVI_XLATE_ID (64 hex digits, or any other text, which is hashed), else <translator>.id next to the exe
 // (tools/build_xlate.py), else the sha256 of the exe.
 static void xlate_identity(void) {
     char text[256] = "";
-    const char *how = "TOTK_XLATE_ID";
-    const char *id_env = cfg_get("TOTK_XLATE_ID");
+    const char *how = "NX2NAVI_XLATE_ID";
+    const char *id_env = cfg_get("NX2NAVI_XLATE_ID");
     if (id_env && *id_env && strlen(id_env) < sizeof text) {
         strcpy(text, id_env);
         if (!hex32(text, xlate_id)) rt_sha256(text, strlen(text), xlate_id);
@@ -264,10 +264,10 @@ static void xlate_identity(void) {
         strcat(p, ".id");
         uint64_t size = 0;
         char *f = (char *)read_file(p, &size);
-        how = "totk_xlate.id";
+        how = "nx2navi_xlate.id";
         if (!f || !hex32(f, xlate_id)) {
             uint8_t *exe = read_file(xlate_exe, &size);
-            how = exe ? "sha256 of the exe; tools/build_xlate.py writes totk_xlate.id" : "none: no translator";
+            how = exe ? "sha256 of the exe; tools/build_xlate.py writes nx2navi_xlate.id" : "none: no translator";
             if (exe) rt_sha256(exe, (size_t)size, xlate_id);
             free(exe);
         }
@@ -277,8 +277,8 @@ static void xlate_identity(void) {
            xlate_id[3], xlate_id[4], xlate_id[5], xlate_id[6], xlate_id[7], how);
 }
 
-// The repository root is the nearest parent of totk.exe that holds build/xlate/totk_xlate.exe. The shader cache lives
-// next to totk.exe, so every build dir has its own (as the pipeline cache, vk_pipeline.c cache_path_init).
+// The repository root is the nearest parent of nx2navi.exe that holds build/xlate/nx2navi_xlate.exe. The shader cache lives
+// next to nx2navi.exe, so every build dir has its own (as the pipeline cache, vk_pipeline.c cache_path_init).
 static void use_preload_start(void);
 
 static void init_paths(void *param) {
@@ -290,19 +290,19 @@ static void init_paths(void *param) {
         for (char *cut = plat_last_sep(exe); cut; cut = plat_last_sep(exe)) {
             *cut = 0;
             char probe[PATH_CAP + 32];
-            snprintf(probe, sizeof probe, "%s/build/xlate/totk_xlate" PLAT_EXE_SUFFIX, exe);
+            snprintf(probe, sizeof probe, "%s/build/xlate/nx2navi_xlate" PLAT_EXE_SUFFIX, exe);
             if (file_exists(probe)) {
                 strcpy(root, exe);
                 break;
             }
         }
     }
-    const char *xlate_cfg = cfg_get("TOTK_XLATE"), *cache_cfg = cfg_get("TOTK_SHADER_CACHE");
-    char beside[PATH_CAP + 32];   // a packaged folder (tools/package_build.py) keeps the translator next to totk.exe
-    if (exe_dir[0]) snprintf(beside, sizeof beside, "%s/totk_xlate" PLAT_EXE_SUFFIX, exe_dir);
+    const char *xlate_cfg = cfg_get("NX2NAVI_XLATE"), *cache_cfg = cfg_get("NX2NAVI_SHADER_CACHE");
+    char beside[PATH_CAP + 32];   // a packaged folder (tools/package_build.py) keeps the translator next to nx2navi.exe
+    if (exe_dir[0]) snprintf(beside, sizeof beside, "%s/nx2navi_xlate" PLAT_EXE_SUFFIX, exe_dir);
     if (xlate_cfg && *xlate_cfg && strlen(xlate_cfg) < sizeof xlate_exe) strcpy(xlate_exe, xlate_cfg);
     else if (exe_dir[0] && file_exists(beside)) strcpy(xlate_exe, beside);
-    else if (root[0]) snprintf(xlate_exe, sizeof xlate_exe, "%s/build/xlate/totk_xlate" PLAT_EXE_SUFFIX, root);
+    else if (root[0]) snprintf(xlate_exe, sizeof xlate_exe, "%s/build/xlate/nx2navi_xlate" PLAT_EXE_SUFFIX, root);
     if (cache_cfg && *cache_cfg && strlen(cache_cfg) < sizeof cache_dir) strcpy(cache_dir, cache_cfg);
     else if (exe_dir[0]) snprintf(cache_dir, sizeof cache_dir, "%s/shader-cache", exe_dir);
     xlate_identity();
@@ -343,7 +343,7 @@ static void child_stop(Svc *v) {
 static int child_start(Svc *v) {
     paths();
     if (!xlate_exe[0] || !file_exists(xlate_exe)) {
-        rt_log("gfx_shader: translator not found (%s); set TOTK_XLATE", xlate_exe[0] ? xlate_exe : "<none>");
+        rt_log("gfx_shader: translator not found (%s); set NX2NAVI_XLATE", xlate_exe[0] ? xlate_exe : "<none>");
         return 0;
     }
     uint32_t err = 0;
@@ -382,17 +382,17 @@ static int child_exchange_raw(Svc *v, const char *line, char *reply, size_t repl
 }
 
 static int child_exchange(Svc *v, const char *line, char *reply, size_t reply_size) {
-    uint64_t p0 = perf_begin();   // TOTK_TRACE=perf: render-thread time spent translating
+    uint64_t p0 = perf_begin();   // NX2NAVI_TRACE=perf: render-thread time spent translating
     int ok = child_exchange_raw(v, line, reply, reply_size);
     perf_end(PERF_XLATE, p0);
     return ok;
 }
 
-// Children allowed at run time: TOTK_XLATE_PROCS, default 2.
+// Children allowed at run time: NX2NAVI_XLATE_PROCS, default 2.
 static int svc_runtime_limit(void) {
     static volatile int32_t n;
     if (!n) {
-        const char *e = cfg_get("TOTK_XLATE_PROCS");
+        const char *e = cfg_get("NX2NAVI_XLATE_PROCS");
         int v = e && *e ? atoi(e) : 2;
         plat_xchg32(&n, v < 1 ? 1 : v > MAX_SVC ? MAX_SVC : v);
     }
@@ -695,7 +695,7 @@ static int fmt_code(const char *name) {
     return 0;
 }
 
-// c2 slot of a texture or image handle (Service.cs of MNG's totk_xlate: combined handles at 0x20, 32 slots; images at
+// c2 slot of a texture or image handle (Service.cs of MNG's nx2navi_xlate: combined handles at 0x20, 32 slots; images at
 // 0x120; separate textures at 0x168), -1 outside those ranges or for a handle in another constant buffer.
 static int handle_slot(int kind, int cbuf_slot, int handle, int separate) {
     if (cbuf_slot >= 0 && cbuf_slot != 2) return -1;
@@ -790,10 +790,10 @@ out:
 
 // Every gradient sample (OpImageSampleExplicitLod with Grad) whose two gradients are each built from two components gets
 // them transposed, dx = (a, c) and dy = (b, d) from dx = (a, b) and dy = (c, d), by two new OpCompositeConstruct before
-// it. TotK's shaders fill a TXD's gradient registers per coordinate (du/dx, du/dy, dv/dx, dv/dy), and the translator
+// it. NX2navi's shaders fill a TXD's gradient registers per coordinate (du/dx, du/dy, dv/dx, dv/dy), and the translator
 // (Ryujinx, InstEmitTexture EmitTxd) builds dx = (first two registers), dy = (last two) = (du/dx, du/dy) and
 // (dv/dx, dv/dy): a mip level chosen from the wrong derivatives, too sharp on terrain faces turned across the screen,
-// which crawled in patches that followed the faces (1.4.3, the Depths). TOTK_TXD_TRANSPOSE=0 turns it off.
+// which crawled in patches that followed the faces (1.4.3, the Depths). NX2NAVI_TXD_TRANSPOSE=0 turns it off.
 // Applied to the SPIR-V after it is loaded, so the shader cache is untouched.
 enum { OP_COMPOSITE_CONSTRUCT = 80, OP_SAMPLE_EXPLICIT = 88, IO_GRAD = 4 };
 
@@ -801,7 +801,7 @@ static void patch_txd_transpose(GfxShader *s) {
     static int on = -1;
     static volatile int32_t n_logged;
     if (on < 0) {
-        const char *e = cfg_get("TOTK_TXD_TRANSPOSE");
+        const char *e = cfg_get("NX2NAVI_TXD_TRANSPOSE");
         on = !(e && *e == '0');
     }
     uint32_t *w = s->spirv;
@@ -1483,8 +1483,8 @@ static const GfxShader *translate_one(const Req *r, int stage, const uint8_t *co
     if (!req) return plat_file_delete(code_path), fail("out of memory", hex);
     build_request(req, hex, r->stage_name, code_path, r->c1, r->c1_len, a, control);
     int ok = svc_request(req, reply, sizeof reply);
-    // TOTK_XLATE_KEEP=1: a last-frame variant's job stays as <key>.job (one request line) with its code, to run the
-    // translator on by hand (totk_xlate --serve < <key>.job)
+    // NX2NAVI_XLATE_KEEP=1: a last-frame variant's job stays as <key>.job (one request line) with its code, to run the
+    // translator on by hand (nx2navi_xlate --serve < <key>.job)
     static int keep = -1;
     if (keep < 0) keep = rt_knob("XLATE_KEEP", "0");
     int kept = keep && a && a->mvprev;
@@ -1630,7 +1630,7 @@ static const GfxShader *get_async_one(Req r, int stage, const uint8_t *control, 
             if (plat_thread_spawn(xlate_worker, NULL, "xlate", 0)) n++;
         }
         X.started = n ? 1 : -1;
-        if (n) rt_log("gfx_shader: graphics shaders are translated by %d background workers (TOTK_XLATE_PROCS)", n);
+        if (n) rt_log("gfx_shader: graphics shaders are translated by %d background workers (NX2NAVI_XLATE_PROCS)", n);
         else rt_log("gfx_shader: cannot start the translation workers; translating synchronously");
     }
     XWait **slot = wait_slot(r.key);
@@ -1866,15 +1866,15 @@ void gfx_shader_local_size(const GfxShader *s, uint32_t local[3]) { memcpy(local
 // ---- answers met in play
 // The translated-shader key includes the answers a draw's state implies, so a translation made without play (the
 // census) does not match the keys play asks for. Every (program, answers) that a gfx_shader_get* call resolves is
-// recorded next to pipeline-keys.bin, so the first-start preparation (Task 2.6, here the TOTK_TEST_PREPARE_SHADERS hook)
+// recorded next to pipeline-keys.bin, so the first-start preparation (Task 2.6, here the NX2NAVI_TEST_PREPARE_SHADERS hook)
 // translates exactly the variants play needs, from these files alone:
-//   shader-answers.bin  "TOTKSANS", version, record size; records: stage (u32), code hash, input id, pack_answers bytes
+//   shader-answers.bin  "NX2NSANS", version, record size; records: stage (u32), code hash, input id, pack_answers bytes
 //                       of the full answers, zero padding. One record per input id: answers outside the shader's use
 //                       mask do not change its SPIR-V, are out of its input id and cache key (mask_answers) and so do
 //                       not make records of their own (a fight run meets 4126 full pairs, 1238 input ids). The full
 //                       answers are kept so a translator with a wider mask still gets them. Under a new translator
 //                       the masks, hence the input ids, are new, and play appends records for them.
-//   shader-programs.bin "TOTKSPRG", version, 0; records: stage, length, c1 length (u32 each), code hash, control section,
+//   shader-programs.bin "NX2NSPRG", version, 0; records: stage, length, c1 length (u32 each), code hash, control section,
 //                       code[length], c1. One per code hash; written before the answers that name it. Game content:
 //                       it stays in the ignored pipeline cache directory.
 // A file with another header is rewritten; a torn tail (killed process) is cut off at open.
@@ -2002,12 +2002,12 @@ void gfx_shader_record_at(const char *keys_path) {
     snprintf(RC.prg_path, sizeof RC.prg_path, "%.*sshader-programs.bin", dir, keys_path);
     uint8_t *b;
     size_t n;
-    if (rec_read(RC.ans_path, "TOTKSANS", ANS_VERSION, ANS_REC, &b, &n)) {
+    if (rec_read(RC.ans_path, "NX2NSANS", ANS_VERSION, ANS_REC, &b, &n)) {
         for (size_t o = 0; o + ANS_REC <= n; o += ANS_REC) set_add(&RC.pairs, hash8(b + o + 36));
         if (n % ANS_REC) truncate_to(RC.ans_path, sizeof(RecHeader) + n / ANS_REC * ANS_REC);
     }
     free(b);
-    if (rec_read(RC.prg_path, "TOTKSPRG", PRG_VERSION, 0, &b, &n)) {
+    if (rec_read(RC.prg_path, "NX2NSPRG", PRG_VERSION, 0, &b, &n)) {
         size_t whole = prg_walk(b, n, prg_seen, &RC.progs);
         if (whole != n) truncate_to(RC.prg_path, sizeof(RecHeader) + whole);
     }
@@ -2069,16 +2069,16 @@ void gfx_shader_record_flush(int force) {
     RC.ans = (Bytes){0}, RC.prg = (Bytes){0};
     uint64_t total = RC.pairs.n, added = RC.pairs_new;
     plat_mutex_unlock(&RC.lock);
-    if (prg.n && !rec_append(RC.prg_path, "TOTKSPRG", PRG_VERSION, 0, &prg)) rt_log("gfx_shader: cannot write %s", RC.prg_path);
-    if (ans.n && !rec_append(RC.ans_path, "TOTKSANS", ANS_VERSION, ANS_REC, &ans)) rt_log("gfx_shader: cannot write %s", RC.ans_path);
+    if (prg.n && !rec_append(RC.prg_path, "NX2NSPRG", PRG_VERSION, 0, &prg)) rt_log("gfx_shader: cannot write %s", RC.prg_path);
+    if (ans.n && !rec_append(RC.ans_path, "NX2NSANS", ANS_VERSION, ANS_REC, &ans)) rt_log("gfx_shader: cannot write %s", RC.ans_path);
     plat_mutex_unlock(&rec_io);
     if (ans.n) rt_log("gfx_shader: answers: %zu new records appended (%llu new this run, %llu recorded)", ans.n / ANS_REC,
                       (unsigned long long)added, (unsigned long long)total);
     free(ans.p), free(prg.p);
 }
 
-// ---- preparation from record files: the answers met in play (TOTK_TEST_PREPARE_SHADERS=1) or the seed that
-// tools/prepare_shaders.py writes from the MacNativeGames shader list (totk.exe --prepare-shaders). Both use the record
+// ---- preparation from record files: the answers met in play (NX2NAVI_TEST_PREPARE_SHADERS=1) or the seed that
+// tools/prepare_shaders.py writes from the MacNativeGames shader list (nx2navi.exe --prepare-shaders). Both use the record
 // layouts above; a seed record has a zero input id (the use mask, hence the id, is the translator's to find) and its
 // pad byte holds the list priority (0 title, 1 warm-up, 2 rest).
 typedef struct { const uint8_t *rec; } PrgIdx;
@@ -2132,8 +2132,8 @@ static long long prepare_files(const char *ans_path, const char *prg_path, int t
     double t0 = (double)plat_now_ms();
     uint8_t *ab = NULL, *pb = NULL;
     size_t an = 0, pn = 0;
-    if (!rec_read(ans_path, "TOTKSANS", ANS_VERSION, ANS_REC, &ab, &an) ||
-        !rec_read(prg_path, "TOTKSPRG", PRG_VERSION, 0, &pb, &pn)) {
+    if (!rec_read(ans_path, "NX2NSANS", ANS_VERSION, ANS_REC, &ab, &an) ||
+        !rec_read(prg_path, "NX2NSPRG", PRG_VERSION, 0, &pb, &pn)) {
         rt_log("gfx_shader: prepare: no %s (%s)", what, ans_path);
         free(ab), free(pb);
         return -1;
@@ -2175,7 +2175,7 @@ void gfx_shader_prepare_recorded(int threads, int procs) {
 }
 
 // ---- prepared variants (shader-prepared.bin next to pipeline-keys.bin)
-// "TOTKSPRP", version, record size; records: stage, priority, 2 zero bytes, input id. gfx_shader_prepare_seed writes
+// "NX2NSPRP", version, record size; records: stage, priority, 2 zero bytes, input id. gfx_shader_prepare_seed writes
 // them in priority order, one per input id; gfx_shader_warm_list reads them at boot.
 #define PRP_VERSION 1
 #define PRP_REC 36
@@ -2203,7 +2203,7 @@ int gfx_shader_prepare_seed(const char *dir, int threads, int procs) {
         by[r[1]]++, stages[r[0]]++, u++;
     }
     free(seen.v);
-    RecHeader h = {{'T', 'O', 'T', 'K', 'S', 'P', 'R', 'P'}, PRP_VERSION, PRP_REC};
+    RecHeader h = {{'N', 'X', '2', 'N', 'S', 'P', 'R', 'P'}, PRP_VERSION, PRP_REC};
     uint8_t *file = recs ? malloc(sizeof h + u * PRP_REC + 1) : NULL;
     int ok = file != NULL;
     if (ok) {
@@ -2233,9 +2233,9 @@ size_t gfx_shader_warm_list(GfxWarmEnt **out) {
     uint8_t *ab = NULL, *pb = NULL;
     size_t an = 0, pn = 0;
     plat_mutex_lock(&rec_io);                      // no append meanwhile
-    rec_read(RC.ans_path, "TOTKSANS", ANS_VERSION, ANS_REC, &ab, &an);
+    rec_read(RC.ans_path, "NX2NSANS", ANS_VERSION, ANS_REC, &ab, &an);
     plat_mutex_unlock(&rec_io);
-    rec_read(prp, "TOTKSPRP", PRP_VERSION, PRP_REC, &pb, &pn);
+    rec_read(prp, "NX2NSPRP", PRP_VERSION, PRP_REC, &pb, &pn);
     size_t na = an / ANS_REC, np = pn / PRP_REC, n = 0;
     GfxWarmEnt *e = calloc(na + np + 1, sizeof *e);
     Set64 seen = {0};

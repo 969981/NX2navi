@@ -10,7 +10,7 @@
              if (gpuAccessor.QueryHostSupportsImageLoadFormatted())
              {
 -                return TextureFormat.Unknown;
-+                // TOTK: an integer image still needs its format: without one it is declared float, and a store of raw
++                // NX2NAVI: an integer image still needs its format: without one it is declared float, and a store of raw
 +                // words (Ocarina packs R11G11B10 itself and stores it through an R32UI view) converts them.
 +                TextureFormat integer = gpuAccessor.QueryTextureFormat(handle, cbufSlot);
 +

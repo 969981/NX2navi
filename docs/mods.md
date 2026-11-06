@@ -1,13 +1,13 @@
 # Mods
 
-TotK Recomp loads the mods players make for the Switch emulators (Ryujinx, yuzu and its forks): texture and model
+NX2navi loads the mods players make for the Switch emulators (Ryujinx, yuzu and its forks): texture and model
 packs, gameplay and text changes from GameBanana and similar sites, TKMM's merged output, code patches (`.ips`,
 `.pchtxt`) and Atmosphère cheat files. No mod or cheat file ships with the port.
 
 ## Install a mod
 
 1. Open the settings menu (F1, Esc, or Minus and Plus together on a controller), go to the Mods tab and choose
-   **Open mods folder**. That is the `mods` folder next to `totk.exe`; the menu creates it when it is missing.
+   **Open mods folder**. That is the `mods` folder next to `nx2navi.exe`; the menu creates it when it is missing.
 2. Make one folder per mod in it and unpack the mod's archive into that folder. The mod's own folders (`romfs`,
    `exefs`, `cheats`) must sit directly inside the mod's folder:
 
@@ -37,13 +37,13 @@ The Mods tab lists every folder in `mods`. Select a mod and press A or Enter to 
 or Ctrl+Up moves it up, the left face button or Ctrl+Down moves it down. When two mods change the same file, the
 higher one wins; the lower mod's row says how many of its files the higher one covers. Changes apply after a restart.
 
-The menu saves the order and the switches in `totk.ini`, under `[mods]`, by folder name: `mods_order` and
+The menu saves the order and the switches in `nx2navi.ini`, under `[mods]`, by folder name: `mods_order` and
 `mods_disabled`. A folder the list does not name yet, such as a new or renamed one, goes below the named ones.
 
 ### Mods that change the same files
 
 Two mods that edit the same game file do not combine: the higher one wins the whole file. Merge such mods with
-[TKMM](https://github.com/TKMM-Team/Tkmm) (TotK Mod Manager) and set its export location to an empty folder inside
+[TKMM](https://github.com/TKMM-Team/Tkmm) (NX2navi Mod Manager) and set its export location to an empty folder inside
 `mods`, for example `mods\TKMM`. The exported folder then counts as one mod here. Mods packaged for TKMM only
 (`.tkcl` files) go the same way.
 
@@ -54,7 +54,7 @@ and raises the entries for files a mod made larger or added. A separate RESTBL m
 
 A mod with `.ips` or `.pchtxt` files patches the game's code. A patch is for one game update: an `.ips` file is named
 after the build id of the update's code, a `.pchtxt` file names it on its `@nsobid` line. The game's code is compiled
-ahead of time, so these patches are built into `totk.exe`:
+ahead of time, so these patches are built into `nx2navi.exe`:
 
 1. The first start after such a mod is added closes the game and opens the setup's rebuild window. The rebuild takes
    a few minutes (the shaders stay prepared), then the game starts again. Saves and settings are kept.
@@ -62,8 +62,8 @@ ahead of time, so these patches are built into `totk.exe`:
 3. After the rebuild the mod switches on and off from the Mods tab like any other, without another rebuild.
 
 The rebuild needs the setup folder the game was installed from. When that folder was moved or deleted, run
-`TotK-Setup.exe` again on the same install folder: it does the same job. `mods_rebuild = off` under `[mods]` in
-`totk.ini` turns the automatic rebuild off.
+`NX2navi-Setup.exe` again on the same install folder: it does the same job. `mods_rebuild = off` under `[mods]` in
+`nx2navi.ini` turns the automatic rebuild off.
 
 A code patch over one of the port's own patches (the 60 FPS patch, the resolution patch and the other entries under
 **Built into the port**) turns that built-in patch off while the mod is on. The mod's row names it.
@@ -101,7 +101,7 @@ A mod never stops the game from starting. Whatever the port cannot use is left o
 
 1. Switch the newest mod off on the Mods tab and restart. If the problem goes away, check that the mod is made for your
    game update and does not fight another mod over the same files.
-2. `logs\totk.log` next to `totk.exe` names every mod at the start (lines starting with `mods:`), the cheats
+2. `logs\nx2navi.log` next to `nx2navi.exe` names every mod at the start (lines starting with `mods:`), the cheats
    (`cheats:`) and the resource size table (`RomFS: resource size table:`). Open log folder on the Advanced tab of
    the menu shows the logs.
-3. When reporting a problem, attach `totk.log` and list your mods with the links you downloaded them from.
+3. When reporting a problem, attach `nx2navi.log` and list your mods with the links you downloaded them from.

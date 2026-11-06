@@ -1,13 +1,13 @@
 # Installer
 
-A public release that turns the player's own game files into a playable TotK folder. The release carries no game
+A public release that turns the player's own game files into a playable NX2navi folder. The release carries no game
 data and no code derived from the game: the installer builds the game on the player's machine. The installed folder
 holds only the game; the installer and its tools stay outside it.
 
 ## What the player does
 
-1. Downloads `TotK-Setup-<version>-windows.zip` from GitHub Releases (none is published yet), unpacks it anywhere and
-   starts `TotK-Setup.exe`.
+1. Downloads `NX2navi-Setup-<version>-windows.zip` from GitHub Releases (none is published yet), unpacks it anywhere and
+   starts `NX2navi-Setup.exe`.
 2. Picks:
    - the base game (XCI or NSP) and the 1.1.0, 1.2.1 or 1.4.3 update (NSP); an NSZ or XCZ (compressed by the nsz
      tool) works as it is, the setup unpacks it itself;
@@ -16,28 +16,28 @@ holds only the game; the installer and its tools stay outside it.
      needed for Chinese, Korean and Traditional Chinese text;
    - the game language and the install folder.
 3. Waits for the setup, one time. The window shows each step and its progress.
-4. Plays `totk.exe` from the install folder. The installer and the source NSP or XCI (or NSZ, XCZ) can be deleted.
+4. Plays `nx2navi.exe` from the install folder. The installer and the source NSP or XCI (or NSZ, XCZ) can be deleted.
 
 The install folder (`main.c` `portable_paths()` reads this layout; it stays portable):
 
 ```
 <install folder>/
-  totk.exe, SDL3.dll, libopus-0.dll, totk_xlate.exe
+  nx2navi.exe, SDL3.dll, libopus-0.dll, nx2navi_xlate.exe
   nvngx_dlss.dll                 NVIDIA DLSS, downloaded by the setup's DLSS step when the player keeps it ticked
-  totk.ini                       language; the other keys as commented defaults (totk.ini.example)
+  nx2navi.ini                       language; the other keys as commented defaults (nx2navi.ini.example)
   exefs/, romfs/                 extracted from the player's files
   shared-fonts/                  the Switch system fonts, with Chinese, Korean or Traditional Chinese text
   profile/                       saves
   mods/                          the player's mods, one folder per mod (created by the menu's "Open mods folder")
-  logs/                          totk.log of the last run, totk.1.log to totk.4.log of the runs before it
+  logs/                          nx2navi.log of the last run, nx2navi.1.log to nx2navi.4.log of the runs before it
   shader and pipeline caches     prepared by the setup; shader-cache/shader-cache.pack holds the translations
-  totk-install.json              what built this folder: release version, input hashes, finished steps
+  nx2navi-install.json              what built this folder: release version, input hashes, finished steps
 ```
 
 ## Updating the port
 
-The player runs a newer installer on the same folder. It reads `totk-install.json`, keeps `romfs/`, `exefs/`,
-`shared-fonts/`, `profile/` and `totk.ini` after checking their hashes, rebuilds `totk.exe` and re-prepares the
+The player runs a newer installer on the same folder. It reads `nx2navi-install.json`, keeps `romfs/`, `exefs/`,
+`shared-fonts/`, `profile/` and `nx2navi.ini` after checking their hashes, rebuilds `nx2navi.exe` and re-prepares the
 shaders. A newer release that changes nothing game-derived skips the rebuild.
 
 Given an update file other than the recorded one (1.1.0, then 1.2.1, then 1.4.3), the installer extracts and builds again from it
@@ -60,12 +60,12 @@ loads the saves 1.4.3 wrote.
    tools refuse costs those cheats or patches, not the install.
 5. **Compile** the generated C, `modules.c`, `romfs.c`, `patches.c` and `ov_zstd.c` (they bake the per-install layout, RomFS
    hashes and the game version's patch page) and link
-   them with the prebuilt runtime library for the host's level (`libtotkrt.a` or `libtotkrt-v2.a`) into `totk.exe`
+   them with the prebuilt runtime library for the host's level (`libnx2navirt.a` or `libnx2navirt-v2.a`) into `nx2navi.exe`
    (`build_game.py --runtime-lib`; about 3 min on 24 cores).
 6. **Prepare** (only when the runtime, the translator or the game version changed, not for a new lift) the RomFS
    patches and the shaders (`tools/make_romfs_patches.py`, `tools/prepare_shaders.py`,
-   `totk.exe --prepare-shaders`) in the install folder, then fold the shader cache's loose files (four per shader, about
-   117,000) into `shader-cache/shader-cache.pack` (`tools/pack_shader_cache.py`). totk.exe reads the pack first and
+   `nx2navi.exe --prepare-shaders`) in the install folder, then fold the shader cache's loose files (four per shader, about
+   117,000) into `shader-cache/shader-cache.pack` (`tools/pack_shader_cache.py`). nx2navi.exe reads the pack first and
    writes the translations it makes in play as loose files; running the tool again with the game closed folds those in.
    The patches are written four times: `romfs-patches`, `romfs-patches-xbox` and `romfs-patches-xbox-label`
    (`--prompts`: Xbox button prompts for `prompts = xbox`, the first for `pad_layout = nintendo`, the second for `xbox`
@@ -77,13 +77,13 @@ loads the saves 1.4.3 wrote.
 7. **DLSS** (the window's tick box, on by default, or `--dlss`; Windows with an NVIDIA RTX GPU): download
    `nvngx_dlss.dll` from NVIDIA's own DLSS SDK repository (github.com/NVIDIA/DLSS, a pinned tag, NVIDIA RTX SDK
    license) into the install folder and check its size and SHA-256 (`steps.py`, `Dlss`). The release does not ship
-   the library; NGX loads it from the folder of totk.exe for `dlaa` and the DLSS modes. A DLSS library already in the
+   the library; NGX loads it from the folder of nx2navi.exe for `dlaa` and the DLSS modes. A DLSS library already in the
    folder (a newer one the player put there) is kept. Without an RTX GPU the step only logs and does nothing; a failed
    download warns, the game runs without DLSS, and the next run of the setup tries again.
 8. **Clean up** the temp folder, except the generated C and the objects (about 1.3 GB), and write
    `build-cache/rebuild.txt` in the install folder.
 
-A cancelled or failed setup resumes from the last finished step (`totk-install.json`).
+A cancelled or failed setup resumes from the last finished step (`nx2navi-install.json`).
 
 ## Rebuilding for the mods
 
@@ -94,7 +94,7 @@ and a few dozen chunks, not a full compile, and the shaders stay prepared.
 `build-cache/rebuild.txt` holds the command that opens the setup window in its rebuild mode on the install folder
 (`installer/gui.py --rebuild <install folder>`, started through `python -c` so the release folder is on `sys.path`
 whatever the working folder), one argument per line. When an enabled mod has code cheats or ExeFS patch files the build
-lacks, `totk.exe` runs it at start and exits (`runtime/cheats.c` `rebuild_if_needed`); the
+lacks, `nx2navi.exe` runs it at start and exits (`runtime/cheats.c` `rebuild_if_needed`); the
 window runs the setup on the folder at once and starts the game again when it succeeds. A failed or cancelled rebuild
 offers to start the game with the code it has; `build-cache/rebuild.skip` then keeps the same files from starting it
 again, until "Rebuild the game now" on the Cheats or Mods tab. `[mods] mods_rebuild = off` turns it off. The rebuild
@@ -108,7 +108,7 @@ needs the release folder the setup ran from: a moved or deleted release folder m
 python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR [--firmware DIR] [--root DIR] [--temp DIR] [--verify]
 ```
 
-- On a folder with `totk-install.json` only `--dest` is needed; the game files only when the extraction must run again.
+- On a folder with `nx2navi-install.json` only `--dest` is needed; the game files only when the extraction must run again.
 - `--firmware DIR` is the folder holding the firmware NCAs: an unpacked firmware, or the emulators' installed
   `Contents/registered` (the parent `Contents` folder works too). It is read only with Chinese, Korean or Traditional
   Chinese text, and only when `shared-fonts/` is not already in the install folder.
@@ -128,7 +128,7 @@ python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR
   window; every sentence is an id in `installer/text/<en|ru|pt-BR|zh-Hans>.json`. A Chinese window still starts with
   English as the game language, because Chinese game text needs the Switch shared fonts, which the setup extracts only
   from a firmware folder. A folder with
-  `totk-install.json` needs only the folder. `--selftest [--shots DIR]` builds every screen in every language and
+  `nx2navi-install.json` needs only the folder. `--selftest [--shots DIR]` builds every screen in every language and
   closes itself.
 - `tests/installer_gui_test.py`: event model, form, catalogs, cancel, the self-closing window and one end-to-end run
   of the CLI in `--verify` mode (needs `build/install-test` and `build/extracted/v121`; see its docstring).
@@ -140,18 +140,18 @@ python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR
 The unpacked release; `tools/make_release.py` assembles it and `--zip` packs it:
 
 ```
-TotK-Setup.exe        starts python/pythonw.exe -m installer.gui (installer/launcher/launcher.c, no console)
+NX2navi-Setup.exe        starts python/pythonw.exe -m installer.gui (installer/launcher/launcher.c, no console)
 installer/            the installer: steps, CLI, window, en/ru/zh-Hans text catalog
 python/               Python 3.14.9 embeddable + numpy, lz4, cryptography, cffi, pycparser (+ tkinter for the window)
 recomp/, tools/       the lifter and the build, extraction and shader scripts the steps run (copied from the repo)
 llvm/                 llvm-mingw, x86_64-only subset (Apache-2.0 with LLVM exception; mingw-w64 parts permissive)
-runtime/              libtotkrt.a, libtotkrt-v2.a and the headers the generated code and modules.c/romfs.c/patches.c
+runtime/              libnx2navirt.a, libnx2navirt-v2.a and the headers the generated code and modules.c/romfs.c/patches.c
                       include
-bin/                  totk_xlate.exe, hactool.exe, SDL3.dll, libopus-0.dll, ninja.exe
+bin/                  nx2navi_xlate.exe, hactool.exe, SDL3.dll, libopus-0.dll, ninja.exe
 data/                 shader_list.tsv (MacNativeGames, MIT); pgo-<ver>.profdata + .json, the execution profile an
                       update's code and the runtime libraries compile with (building.md, "Profile-guided build")
 THIRD_PARTY_NOTICES.md
-totk.ini.example, VERSION  the default ini; the release string (the repository's VERSION plus the commit)
+nx2navi.ini.example, VERSION  the default ini; the release string (the repository's VERSION plus the commit)
 ```
 
 - SDL3 comes from the upstream release, not MSYS2: MSYS2's DLL imports the LGPL libiconv.
@@ -169,28 +169,28 @@ nn::pl shared fonts). The game does not ship them. Without them it exits before 
 - Give the setup the firmware folder (`--firmware DIR`, or the window's firmware field); the Fonts step extracts them to
   `shared-fonts/` in the install folder.
 - Run `python tools/extract_fonts.py --firmware <dir>` with `.venv-py314` and the keys from `config.local.toml`, or
-  point `TOTK_SHARED_FONTS` at a folder that holds the extracted fonts.
+  point `NX2NAVI_SHARED_FONTS` at a folder that holds the extracted fonts.
 
 ## Linux release
 
-`tools/make_release_linux.py` builds the same setup for Linux and packs it as `TotK-Setup-x86_64.AppImage` (the static
+`tools/make_release_linux.py` builds the same setup for Linux and packs it as `NX2navi-Setup-x86_64.AppImage` (the static
 type-2 runtime: no libfuse2 needed on the host). The player makes it executable and starts it; on a Steam Deck, from
 Desktop Mode. The command-line setup needs the desktop session's display (`DISPLAY` or `WAYLAND_DISPLAY`) because preparing the
 shaders opens a window; the check step fails at once without it. Building the release also needs `make` and `pkg-config`. The bundled Tcl/Tk 9.0.4 is rebuilt with
-Xft against the sniper sysroot so Russian text uses system TrueType fonts. The setup builds the game into the folder they pick, as on Windows, and the game is `totk` there with
+Xft against the sniper sysroot so Russian text uses system TrueType fonts. The setup builds the game into the folder they pick, as on Windows, and the game is `nx2navi` there with
 `libSDL3.so.0` beside it. The folder inside the AppImage:
 
 ```
 AppRun                starts python/bin/python3 -m installer.gui (no bytecode written into the read-only mount)
-totk-setup.desktop, totk-setup.png
-installer/, recomp/, tools/, data/, licenses/, THIRD_PARTY_NOTICES.md, totk.ini.example, VERSION   as on Windows
+nx2navi-setup.desktop, nx2navi-setup.png
+installer/, recomp/, tools/, data/, licenses/, THIRD_PARTY_NOTICES.md, nx2navi.ini.example, VERSION   as on Windows
 python/               python-build-standalone 3.14 (with tkinter) + the installer's packages; a .pth puts the folder,
                       tools/ and recomp/ on sys.path
 llvm/                 LLVM 23 (clang, lld, llvm-ar) and llvm/sysroot: the files of the Steam Runtime 3 "sniper" SDK the
                       game's compile and link read (about 130 files)
-runtime/              libtotkrt.a, libtotkrt-v2.a, headers, the install-side sources, totk.png; deps/ with the Vulkan
+runtime/              libnx2navirt.a, libnx2navirt-v2.a, headers, the install-side sources, nx2navi.png; deps/ with the Vulkan
                       headers, VMA and a static zstd
-bin/                  totk_xlate, hactool, ninja, libSDL3.so.0
+bin/                  nx2navi_xlate, hactool, ninja, libSDL3.so.0
 ```
 
 - What we compile is built against the sniper sysroot (glibc 2.31): the game, hostcheck, hactool and the translator
@@ -201,7 +201,7 @@ bin/                  totk_xlate, hactool, ninja, libSDL3.so.0
   message on an older system.
 - The setup's temp folder is `.setup-temp` inside the install folder (`--temp` changes it): the AppImage is mounted
   read-only, and a Steam Deck's `/home` is often too full for the generated C while the game goes to the SD card.
-- The game keeps Mesa's shader cache in `mesa-cache` beside `totk` unless `MESA_SHADER_CACHE_DIR` is set, for the
+- The game keeps Mesa's shader cache in `mesa-cache` beside `nx2navi` unless `MESA_SHADER_CACHE_DIR` is set, for the
   same reason: RADV fills its default folder in `~/.cache` up to 1 GB.
 - The window follows `LANG` for English or Russian, cancels through SIGTERM to the CLI's process group (the CLI handles
   it as Ctrl+Break on Windows) and opens the finished folder with `xdg-open`.
@@ -218,7 +218,7 @@ bin/                  totk_xlate, hactool, ninja, libSDL3.so.0
   ...`), which prints one JSON progress event per line. Tests and CI use the CLI.
 - Paths may hold any Unicode characters (a Cyrillic user name puts the temp and install folders under it). Every exe
   the setup runs or builds reads its arguments and paths as UTF-8 through an `activeCodePage` manifest: hactool
-  (our patch, [building.md](building.md)), totk.exe (`runtime/totk.rc`), ninja (upstream). The Python steps write
+  (our patch, [building.md](building.md)), nx2navi.exe (`runtime/nx2navi.rc`), ninja (upstream). The Python steps write
   their files and logs as UTF-8, and `build_game.py` quotes paths with spaces on its Ninja command lines.
 - A game file whose data fails its hash checks or ends early stops the setup with `check.input_damaged`, which names
   the file and asks to copy it again (`extract.DamagedFile`). A failed merge checks the base Program NCA alone to tell

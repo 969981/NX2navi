@@ -61,7 +61,7 @@ static bool iequals(std::string_view a, std::string_view b) {
 
 static void set_current_dir(const std::string &path) {
     g_current_dir = path;
-    cfg_set("TOTK_AMIIBO_DIR", g_current_dir.c_str());
+    cfg_set("NX2NAVI_AMIIBO_DIR", g_current_dir.c_str());
 }
 
 // The host's folder dialog (folder_pick.h) answers on its own thread; the page takes the answer when it draws.
@@ -130,7 +130,7 @@ void tab_amiibo(float scale) {
     (void)scale;   // the rows take ImGui's own sizes, already scaled with the font
     static bool s_inited = false;
     if (!s_inited) {
-        const char *cfg_dir = cfg_get("TOTK_AMIIBO_DIR");
+        const char *cfg_dir = cfg_get("NX2NAVI_AMIIBO_DIR");
         if (cfg_dir && *cfg_dir) {
             g_current_dir = cfg_dir;
         } else {

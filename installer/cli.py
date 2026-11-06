@@ -3,7 +3,7 @@
 
 A first install needs every option. --firmware names the Switch firmware folder (an unpacked firmware or an emulator's
 Contents/registered); the setup extracts the system shared fonts from it when the language is Chinese, Korean or
-Traditional Chinese. On a folder with totk-install.json (resume after a cancel or failure, or update with a newer
+Traditional Chinese. On a folder with nx2navi-install.json (resume after a cancel or failure, or update with a newer
 release) only --dest is needed: --lang defaults to the recorded language, and the game files are needed only when the
 extraction has to run again. Prints JSON events on stdout (events.py). Exit code: 0 done, 1 failed, 2 bad command
 line, 3 cancelled (Ctrl+C or Ctrl+Break).

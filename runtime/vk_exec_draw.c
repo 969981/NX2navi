@@ -27,8 +27,8 @@
 #include "nvn_hmap.h"
 #include "vk.h"
 
-#ifndef TOTK_TONEMAP_STANDIN
-#define TOTK_TONEMAP_STANDIN 0   // vk_tonemap.c, see untranslated_dispatch_fallback
+#ifndef NX2NAVI_TONEMAP_STANDIN
+#define NX2NAVI_TONEMAP_STANDIN 0   // vk_tonemap.c, see untranslated_dispatch_fallback
 #endif
 #include "vk_exec.h"
 #include "platform/platform.h"
@@ -137,7 +137,7 @@ static struct {
 #define DS_SIG_BYTES (MAX_DESC * sizeof(VkDescSlot))
 static struct { uint32_t n[2], pn[2]; uint8_t sig[2][DS_SIG_BYTES], psig[2][DS_SIG_BYTES]; } DS;
 
-// TOTK_BIND_STATS counters (bind_stats).
+// NX2NAVI_BIND_STATS counters (bind_stats).
 static struct {
     int on;
     uint64_t draws, bind[2], desc[2], push, push_skip, set_new, set_reuse, ac_miss, same_prog, same_all, bind_skip;
@@ -149,7 +149,7 @@ static struct {
 #define RS_BYTES (MAX_BINDINGS * sizeof(((VkExec *)0)->ssbo[0]) + MAX_DESC * sizeof(p_bind_buf))
 typedef struct { int cls, use; uint64_t bytes; } RsCount;
 static struct {
-    int on;                              // TOTK_BIND_SKIP: 1 skip (default), 2 check, 0 off
+    int on;                              // NX2NAVI_BIND_SKIP: 1 skip (default), 2 check, 0 off
     uint32_t hn;                         // words of h the last signature filled; 0: none
     uint64_t h[24];                      // generations, feedback images, support inputs, base instance
     const VkPipeInfo *info;              // the pipeline whose RsList ranges body holds, as of bind op generation gen
@@ -863,7 +863,7 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
         if (imiss)
             c->it[slot] = type_of_handle(hi), c->ifmt[slot] = format_of_handle(hi), c->img[slot] = hi, c->itok[slot] = it,
             c->igen[slot] = gen;
-        if (check && (type_of_handle(h) != c->tt[slot] || type_of_handle(hi) != c->it[slot]))   // TOTK_SHADER_MEMO=check
+        if (check && (type_of_handle(h) != c->tt[slot] || type_of_handle(hi) != c->it[slot]))   // NX2NAVI_SHADER_MEMO=check
             rt_fatal("vk_exec: kept texture types of stage %d slot %d differ from a lookup", st, slot);
         a->tex_type[slot] = c->tt[slot], a->img_type[slot] = c->it[slot], a->img_format[slot] = c->ifmt[slot];
     }
@@ -1010,10 +1010,10 @@ void vk_c0_fill(uint8_t bank[VK_C0_BYTES], int stage, const p_bind_buf ssbo[16],
     memcpy(bank + 0x644, &base_instance, 4);
 }
 
-static int c0_on(void) {   // TOTK_FIX_C0=0: c0 reads zeros instead of the driver constants
+static int c0_on(void) {   // NX2NAVI_FIX_C0=0: c0 reads zeros instead of the driver constants
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("TOTK_FIX_C0");
+        on = cfg_bool("NX2NAVI_FIX_C0");
     }
     return on;
 }
@@ -1111,7 +1111,7 @@ static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
 // (cbuf_slot 0, handle = word offset): 16-byte entries at byte 0x110 (vertex), 0x510 (fragment) and 0x310 (compute).
 // A compute address at c0 0x210..0x30f is uniform block (offset - 0x210) / 16 read as storage: *ubo is set. -1: the
 // address is not in c0 (the shader loads it from a user uniform block: ubo_ptr) or the stage has no known table.
-// Mapping: MacNativeGames games/totk/tools/totk_xlate/Service.cs:206-222 @ b75be8cf (MIT, Copyright (c) 2026 jhaizhou).
+// Mapping: MacNativeGames games/totk/tools/nx2navi_xlate/Service.cs:206-222 @ b75be8cf (MIT, Copyright (c) 2026 jhaizhou).
 static int ssbo_slot(const GfxShaderRes *r, int st, int *ubo) {
     *ubo = 0;
     if (r->cbuf_slot != 0) return -1;
@@ -1289,7 +1289,7 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
 }
 
 // ---- feedback loops (maxwell.md 1.9, vk.h VkCtx.feedback)
-// TotK's G-buffer and terrain shaders sample targets of the pass that renders them, at their own pixel, after earlier
+// NX2navi's G-buffer and terrain shaders sample targets of the pass that renders them, at their own pixel, after earlier
 // draws of the pass wrote them (albedo, normals, R32F linear depth). Maxwell reads see those writes; in Vulkan the read
 // is undefined without a barrier, and on the RX 9070 it showed as dark screen-aligned blocks on the island ground
 // and hid Tulin's sage spirit. Before a draw whose fragment shader samples an attachment of
@@ -1329,11 +1329,11 @@ static uint32_t attached_as(const VkExec *ex, const SubRange *r) {
     return m;
 }
 
-// TOTK_TEX_MEMO (tex_info, feedback_scan): 0 off, 1 on, 2 (=check) computes every hit again and stops on a difference.
+// NX2NAVI_TEX_MEMO (tex_info, feedback_scan): 0 off, 1 on, 2 (=check) computes every hit again and stops on a difference.
 static int td_mode(void) {
     static int on = -1;
     if (on < 0) {
-        const char *e = cfg_value("TOTK_TEX_MEMO");
+        const char *e = cfg_value("NX2NAVI_TEX_MEMO");
         on = !strcmp(e, "check") ? 2 : strcmp(e, "0") != 0;
     }
     return on;
@@ -1443,7 +1443,7 @@ static void tex_info_full(VkExec *ex, const GfxShaderRes *r, uint64_t h, int sto
 // for its storage check; a re-upload writes the same image, so the descriptor stays. Draws bind the same textures
 // thousands of times a frame (15,000 lookups a frame in the monsters fight); a hit skips the slot lookup, the view key
 // with its hash probe and the sampler lookup. Storage images, which note their binding per submission, are
-// not kept. Direct-mapped; texture lock held. TOTK_TEX_MEMO=0 turns it off; =check computes every hit again and stops
+// not kept. Direct-mapped; texture lock held. NX2NAVI_TEX_MEMO=0 turns it off; =check computes every hit again and stops
 // on a difference.
 #define TD_N 8192
 static struct {
@@ -1632,7 +1632,7 @@ static void pool_write(uint32_t binding, uint32_t id, VkImageView view, VkSample
 
 // Entry id of every kind in mask: the slot's view of that kind or the kind's stand-in. Texture lock held. 0: the
 // slot's texture was left to a later sync by the creation budget (pool_sync).
-// TOTK_SKIP_SHADERS=<hash>,...: draws and dispatches whose shader's SPIR-V has one of these FNV-1a hashes (the "vs"/"fs"/
+// NX2NAVI_SKIP_SHADERS=<hash>,...: draws and dispatches whose shader's SPIR-V has one of these FNV-1a hashes (the "vs"/"fs"/
 // "cs" hashes of the frame dump's passes.txt) are skipped (diagnosis: which pass makes an effect).
 static int shader_skipped(const GfxShader *sh) {
     static uint64_t list[16];
@@ -1640,7 +1640,7 @@ static int shader_skipped(const GfxShader *sh) {
     static struct { const GfxShader *s; uint8_t skip; } memo[256];
     if (n < 0) {
         n = 0;
-        const char *e = cfg_get("TOTK_SKIP_SHADERS");
+        const char *e = cfg_get("NX2NAVI_SKIP_SHADERS");
         for (const char *p = e; p && *p && n < 16;) {
             char *end;
             uint64_t v = strtoull(p, &end, 16);
@@ -1648,7 +1648,7 @@ static int shader_skipped(const GfxShader *sh) {
             list[n++] = v;
             p = *end ? end + 1 : end;
         }
-        if (n) rt_log("vk: TOTK_SKIP_SHADERS: %d shader hashes skipped", n);
+        if (n) rt_log("vk: NX2NAVI_SKIP_SHADERS: %d shader hashes skipped", n);
     }
     if (!n || !sh) return 0;
     uint32_t i = (uint32_t)(((uintptr_t)sh * 0x9E3779B97F4A7C15ull) >> 56);
@@ -1662,7 +1662,7 @@ static int shader_skipped(const GfxShader *sh) {
     return skip;
 }
 
-// TOTK_POOL=0: draws and dispatches of pipelines that index the pools are skipped (A/B against bindless shaders).
+// NX2NAVI_POOL=0: draws and dispatches of pipelines that index the pools are skipped (A/B against bindless shaders).
 static int pool_on(void) {
     static int on = -1;
     if (on < 0) on = rt_knob("POOL", "1");
@@ -1729,13 +1729,13 @@ static void pool_sync(VkExec *ex) {
 }
 
 // ---- depth twins: colour images under a compare sampler in a compute shader
-// TotK's compute passes sample an R32_SFLOAT texture through a shadow sampler. Maxwell compares any single-channel
+// NX2navi's compute passes sample an R32_SFLOAT texture through a shadow sampler. Maxwell compares any single-channel
 // float or unorm texel; Vulkan only formats with SAMPLED_IMAGE_DEPTH_COMPARISON (VUID-vkCmdDispatch-None-06479), which
 // AMD's drivers do not give R32_SFLOAT, so the result there is undefined. Such an image gets a depth twin of the same
 // size and bits (R32_SFLOAT -> D32_SFLOAT, R16_UNORM -> D16_UNORM), copied through a buffer right before each dispatch
 // that samples it (a dispatch is outside any render pass), and the dispatch samples the twin. Draws keep the colour
 // image: a copy cannot go inside their pass. Design: Savage Wind Recomp runtime/nvn/vulkan/exec.c depth_twin_update
-// (https://github.com/Revivedx/SavageWindRecomp, MIT); the code is ours. TOTK_DEPTH_TWIN=0: off.
+// (https://github.com/Revivedx/SavageWindRecomp, MIT); the code is ours. NX2NAVI_DEPTH_TWIN=0: off.
 #define TWINS 8
 typedef struct { VkImage src, img; VmaAllocation mem; VkImageView view[2]; uint32_t w, h, layers; VkFormat fmt; } Twin;
 static Twin twins[TWINS];
@@ -1942,17 +1942,17 @@ static void support_in(const VkExec *ex, float in[3]) {   // what support_fill r
     in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
 }
 
-// TOTK_PCSS (percent, 0 = off): the pcss field of the support buffer, which translator patch 0010 reads in every
+// NX2NAVI_PCSS (percent, 0 = off): the pcss field of the support buffer, which translator patch 0010 reads in every
 // explicit-LOD compare on a 2D array texture (the sun cascades). x: penumbra width in UV per unit of light-space depth
 // between receiver and blocker (0 keeps the game's single compare), y and z: the narrowest and widest disc radius,
-// w: the blocker search radius, all in UV of the cascade map. Radii are in UV, so they hold at any TOTK_SHADOW_SCALE.
-// TOTK_PCSS_K overrides the depth-to-penumbra factor at 100 percent, for tuning.
+// w: the blocker search radius, all in UV of the cascade map. Radii are in UV, so they hold at any NX2NAVI_SHADOW_SCALE.
+// NX2NAVI_PCSS_K overrides the depth-to-penumbra factor at 100 percent, for tuning.
 static const float *pcss_params(void) {
     static float p[4] = {-1, 0, 0, 0};
     if (p[0] < 0) {
-        int pct = cfg_int("TOTK_PCSS");
+        int pct = cfg_int("NX2NAVI_PCSS");
         pct = pct < 0 ? 0 : pct > 200 ? 200 : pct;
-        const char *k = cfg_get("TOTK_PCSS_K");
+        const char *k = cfg_get("NX2NAVI_PCSS_K");
         float k100 = k && *k ? (float)atof(k) : 0.5f;
         p[0] = k100 * (float)pct / 100.0f;
         p[1] = 0.35f / 960.0f, p[2] = 5.0f / 960.0f, p[3] = 4.0f / 960.0f;
@@ -1962,15 +1962,15 @@ static const float *pcss_params(void) {
 }
 
 // The shadow_spread field of the support buffer: the factor translator patch 0011 applies to the lighting shaders' sun
-// shadow filter offset (element 56 .xy of their lighting block), 1 / TOTK_SHADOW_SCALE. The game spaces its four
-// compares for its own shadow map texels; with maps TOTK_SHADOW_SCALE times larger, the same offset in UV spans that
+// shadow filter offset (element 56 .xy of their lighting block), 1 / NX2NAVI_SHADOW_SCALE. The game spaces its four
+// compares for its own shadow map texels; with maps NX2NAVI_SHADOW_SCALE times larger, the same offset in UV spans that
 // many more texels and the near cascade shows four separate copies of each edge. Dividing by the scale keeps the game's
 // spacing in texels. The offset is in UV of the shadow map, so the output resolution plays no part. The scale is read
 // once, as vk_texture.c shadow_scale reads it: the maps keep the size they were made with.
 static const float *shadow_spread_params(void) {
     static float p[4] = {0, 0, 0, 0};
     if (p[0] == 0) {
-        int scale = cfg_int("TOTK_SHADOW_SCALE");
+        int scale = cfg_int("NX2NAVI_SHADOW_SCALE");
         scale = scale < 1 ? 1 : scale > 4 ? 4 : scale;
         p[0] = 1.0f / (float)scale;
     }
@@ -1994,14 +1994,14 @@ static void support_fill(uint8_t *b, float w, float h, float point_size) {
     }
 }
 
-// TOTK_BIND_STATS=1: bindings and descriptors per draw of each stage (Task 2.2's choice of the pushed stage), and how
+// NX2NAVI_BIND_STATS=1: bindings and descriptors per draw of each stage (Task 2.2's choice of the pushed stage), and how
 // often a draw repeats the previous one, logged every 20000 draws: pushes recorded and skipped, allocated sets written
 // and reused, stage texture-type recomputations (answers_for), draws with the previous draw's program, bound state
 // and textures (shaders and pipeline would be the same) and those that also have its buffers and viewport (all
 // descriptors would be the same). BS is declared beside DS.
 static int bind_stats_on(void) {
     if (BS.on < 0) {
-        const char *e = cfg_get("TOTK_BIND_STATS");
+        const char *e = cfg_get("NX2NAVI_BIND_STATS");
         BS.on = e && *e && strcmp(e, "0");
     }
     return BS.on;
@@ -2025,7 +2025,7 @@ static void bind_stats(const VkPipeInfo *info) {
     }
 }
 
-// The bound state a draw reads, compared with the previous draw's (TOTK_BIND_STATS only).
+// The bound state a draw reads, compared with the previous draw's (NX2NAVI_BIND_STATS only).
 static void repeat_stats(const VkExec *ex, const VkPipeInfo *info) {
     static struct {
         const prog_t *prog;
@@ -2052,17 +2052,17 @@ static void repeat_stats(const VkExec *ex, const VkPipeInfo *info) {
     last = cur;
 }
 
-static int push_skip_on(void) {   // TOTK_PUSH_SKIP=0: every graphics draw pushes its set again
+static int push_skip_on(void) {   // NX2NAVI_PUSH_SKIP=0: every graphics draw pushes its set again
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("TOTK_PUSH_SKIP");
+        on = cfg_bool("NX2NAVI_PUSH_SKIP");
     }
     return on;
 }
 
 // A graphics draw whose descriptor inputs equal the previous graphics draw's in this command buffer skips building its
 // sets: every write would be the same, the push would be skipped and the allocated set reused without a bind (about a
-// quarter of field and monsters2 draws, TOTK_BIND_STATS). The inputs, compared and stored in place, are what
+// quarter of field and monsters2 draws, NX2NAVI_BIND_STATS). The inputs, compared and stored in place, are what
 // bind_resources and its helpers read beyond the pipeline info's fixed bindings and Z's stand-ins:
 // - the info (bindings, layouts), the program and its serial (the compiler-constant range of UBO slot 1);
 // - vk_texture_slots_gen, vk_texture_epoch (a slot's image, view and once-per-submit storage check), vk_sampler_gen;
@@ -2077,11 +2077,11 @@ static int push_skip_on(void) {   // TOTK_PUSH_SKIP=0: every graphics draw pushe
 // the views cached per submission. The census counts are added again. A build that copied guest bytes into transient
 // memory (an unaligned host range) is never skipped after: the copy may differ. B.res_valid says the sets bound hold
 // the last build; vk_exec_draw_new_cb's memset clears it, and every build clears it until it ends.
-// TOTK_BIND_SKIP=0 builds every draw; =check builds every draw and stops when a draw with equal inputs gets other
+// NX2NAVI_BIND_SKIP=0 builds every draw; =check builds every draw and stops when a draw with equal inputs gets other
 // writes, census counts or descriptor commands.
 static int bind_skip_on(void) {
     if (RS.on < 0) {
-        const char *e = cfg_value("TOTK_BIND_SKIP");
+        const char *e = cfg_value("NX2NAVI_BIND_SKIP");
         RS.on = !strcmp(e, "check") ? 2 : strcmp(e, "0") != 0;
         if (RS.on != 1) rt_log("vk_exec: descriptor build skip %s", RS.on ? "check" : "off");
     }
@@ -2377,7 +2377,7 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
     }
     if (skip) {
         RS.rec = 0;
-        // An equal next draw records nothing when every push set holds its push (TOTK_PUSH_SKIP on) and nothing made
+        // An equal next draw records nothing when every push set holds its push (NX2NAVI_PUSH_SKIP on) and nothing made
         // the build unrepeatable; allocated sets are always bound to the one written last.
         int valid = !RS.volatile_ && !RS.cnt_over && RS.hn;
         for (uint32_t s = 0; s < n_sets; s++)
@@ -2496,7 +2496,7 @@ static void bind_vertex_buffers(VkExec *ex) {
     B.vb_valid = 1;
 }
 
-// TOTK_PIPE_SKIP: which draws are skipped, rather than waited for, while their shaders or pipeline build.
+// NX2NAVI_PIPE_SKIP: which draws are skipped, rather than waited for, while their shaders or pipeline build.
 // strict (0): only draws whose pass targets were all rendered in the previous presented frame; a pass with a target
 //   that was not counts as one-shot and waits.
 // any (1): also draws in a pass with at least one target rendered in the previous frame (a per-frame depth
@@ -2510,11 +2510,11 @@ static void bind_vertex_buffers(VkExec *ex) {
 static int pipe_skip_mode(void) {
     static int mode = -1;
     if (mode < 0) {
-        const char *e = cfg_value("TOTK_PIPE_SKIP");
+        const char *e = cfg_value("NX2NAVI_PIPE_SKIP");
         mode = !strcmp(e, "strict") || !strcmp(e, "0") ? 0 : !strcmp(e, "fullscreen") || !strcmp(e, "2") ? 2 : 1;
-        static const char *const what[3] = {"only draws into per-frame passes (TOTK_PIPE_SKIP=strict)",
+        static const char *const what[3] = {"only draws into per-frame passes (NX2NAVI_PIPE_SKIP=strict)",
                                             "draws into passes with a target the previous frame rendered",
-                                            "those and full-screen draws (TOTK_PIPE_SKIP=fullscreen)"};
+                                            "those and full-screen draws (NX2NAVI_PIPE_SKIP=fullscreen)"};
         rt_log("vk_exec: draws skipped while their pipeline builds: %s", what[mode]);
     }
     return mode;
@@ -2524,7 +2524,7 @@ static int pipe_skip_mode(void) {
 // texture and image handles and every slot's resolution (vk_texture_slots_gen, read unlocked: a registration racing
 // with it is ordered after this draw, as answers_for's own check would order it) stay the same: answers_for reads
 // nothing else, so shader_for would return the same shaders. About 65% of field draws repeat them
-// (TOTK_BIND_STATS). TOTK_SHADER_MEMO=0 turns it off; =check looks the shaders up on every hit too, and every slot's
+// (NX2NAVI_BIND_STATS). NX2NAVI_SHADER_MEMO=0 turns it off; =check looks the shaders up on every hit too, and every slot's
 // texture type in answers_for, and stops on a difference.
 // tex_serial (bumped by every texture and image bind) equal to the key's means the handles were not rebound since
 // they were compared, so the 1 KiB compare is skipped; a rebind to the same handles still matches by the compare.
@@ -2557,7 +2557,7 @@ static int memo_match(const VkExec *ex, uint32_t gen, MemoKey *k) {
 
 static int shader_memo_on(void) {
     if (SM.on < 0) {
-        const char *e = cfg_value("TOTK_SHADER_MEMO");
+        const char *e = cfg_value("NX2NAVI_SHADER_MEMO");
         SM.on = !strcmp(e, "check") ? 2 : strcmp(e, "0") != 0;
     }
     return SM.on;
@@ -2566,7 +2566,7 @@ static int shader_memo_on(void) {
 static struct { int on, valid; VkPipeState s; const VkPipeInfo *info; } PM = {-1};
 
 static int pipe_memo_on(void) {
-    if (PM.on < 0) PM.on = cfg_bool("TOTK_PIPE_MEMO");
+    if (PM.on < 0) PM.on = cfg_bool("NX2NAVI_PIPE_MEMO");
     return PM.on;
 }
 
@@ -2576,14 +2576,14 @@ static int pipe_memo_on(void) {
 // skipped for each reason is logged with its program, and every DRAW_STATS_FRAMES presented frames one line sums up
 // the draws issued and skipped since the last line (only when something was skipped). A black screen with draws
 // skipped for "shader failed" or "pipeline failed" points at the translator or the pipeline; draws issued and still
-// nothing on screen point at the shaders' results (TOTK_DUMP).
+// nothing on screen point at the shaders' results (NX2NAVI_DUMP).
 enum { SK_DISABLED, SK_SCISSOR, SK_NO_PROGRAM, SK_NO_VERTEX_STAGE, SK_SHADER_PENDING, SK_SHADER_FAILED, SK_DLAA,
        SK_PIPE_PENDING, SK_PIPE_FAILED, SK_POOL_OFF, SK_COUNT };
 static const char *const sk_names[SK_COUNT] = {
     "rendering disabled (render condition)", "empty scissor", "no program bound",
     "no vertex (or mesh) stage in the program", "shader still translating",
     "shader failed to translate (see gfx_shader: translation failed)", "replaced by the upscaler",
-    "pipeline still building", "pipeline could not be created", "uses the texture pools (TOTK_POOL=0)"};
+    "pipeline still building", "pipeline could not be created", "uses the texture pools (NX2NAVI_POOL=0)"};
 #define DRAW_STATS_FRAMES 600
 static struct { uint64_t issued[2], skipped[2][SK_COUNT], frame; uint32_t first[2]; } DRS;
 
@@ -2668,7 +2668,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
         if (fs_wait) fs = shader_for(ex, NVN_STAGE_FS, &has_fs, NULL, 1);
     }
     if (!vs || (has_fs && !fs) || (has_ts && !ts)) return draw_skipped(ex, mesh, SK_SHADER_FAILED);
-    if (shader_skipped(vs) || shader_skipped(fs)) return draw_skipped(ex, mesh, SK_POOL_OFF);   // TOTK_SKIP_SHADERS
+    if (shader_skipped(vs) || shader_skipped(fs)) return draw_skipped(ex, mesh, SK_POOL_OFF);   // NX2NAVI_SKIP_SHADERS
     if (vk_dlaa_skip_draw(ex, fs)) return draw_skipped(ex, mesh, SK_DLAA);   // the game's FXAA off, or its scaling replaced by DLSS (vk_dlaa.c)
     uint32_t fbl = feedback_prepare(ex, fs);
     VkPipeState s = ex->pipe;
@@ -2682,7 +2682,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     int pending;
     // A draw of at most 6 vertices over half the render area or more (a full-screen triangle or quad, a tile) waits for
     // its pipeline: skipping it can leave a black tile. The waits share 50 ms per presented frame
-    // (TOTK_PIPE_SKIP=fullscreen skips them instead). A one-shot draw waits without that budget. Everything else is
+    // (NX2NAVI_PIPE_SKIP=fullscreen skips them instead). A one-shot draw waits without that budget. Everything else is
     // skipped while its pipeline is built.
     static uint64_t wait_frame;
     static uint64_t wait_left_ns;
@@ -2696,7 +2696,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
         wait_ms = (uint32_t)(wait_left_ns / 1000000);
         if (wait_ms) t0 = kern_now_ns();
     }
-    // The previous draw's pipeline while its state repeats (PM, TOTK_PIPE_MEMO=0 turns it off): the cache key is made
+    // The previous draw's pipeline while its state repeats (PM, NX2NAVI_PIPE_MEMO=0 turns it off): the cache key is made
     // from the state alone, and a pipeline once found only changes from its fast link to its optimised build, read
     // from the info the cache entry keeps.
     VkPipeline p;
@@ -2776,7 +2776,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
 // uniform blocks, the jittered viewport and the scene depth, tested with the game's own test and its equal case
 // (LEQUAL, GEQUAL) without writes, so only the visible surface writes its vector. Last frame's blocks:
 // vk_mvprev_find and mo_prev_block; the camera: vk_dlaa_prev_camera. A draw whose variant or pipeline is still
-// building, or whose last-frame blocks are not in the snapshot, keeps the camera's motion. TOTK_DLAA_OBJMV=0 turns it
+// building, or whose last-frame blocks are not in the snapshot, keeps the camera's motion. NX2NAVI_DLAA_OBJMV=0 turns it
 // off (vk_mvprev.c).
 #include "vk_mvobj_fs.h"
 static const char MO_FS_RES[] = "{\"key\":\"mvobj\",\"stage\":\"ps\",\"notes\":[],\"cbufs\":[{\"binding\":1,\"slot\":3}],"
@@ -3071,14 +3071,14 @@ static void mvobj_draw_(VkExec *ex, const p_draw_idx *d, VkBuffer ib, VkDeviceSi
 static void mvobj_draw(VkExec *ex, const p_draw_idx *d, VkBuffer ib, VkDeviceSize ib_off) {
     if (MO.failed || !vk_mvprev_on() || !B.st_valid) return;
     static int timed = -1;
-    if (timed < 0) timed = rt_knob("MVOBJ_TIMES", "0");   // TOTK_MVOBJ_TIMES=1: the summary's times (the clock reads cost)
+    if (timed < 0) timed = rt_knob("MVOBJ_TIMES", "0");   // NX2NAVI_MVOBJ_TIMES=1: the summary's times (the clock reads cost)
     if (!timed) return mvobj_draw_(ex, d, ib, ib_off, 0);
     uint64_t t0 = kern_now_ns();
     mvobj_draw_(ex, d, ib, ib_off, t0);
     MO.ns_check += kern_now_ns() - t0;
 }
 
-// TOTK_MVOBJ_BANKS=1 (test): for scene draws, the words of each other uniform bank (c3, c6, c8-c16) that changed
+// NX2NAVI_MVOBJ_BANKS=1 (test): for scene draws, the words of each other uniform bank (c3, c6, c8-c16) that changed
 // since the same shader's draw last frame, logged at frame 3000: where the time that moves wind and water lives
 static void mvobj_banks(VkExec *ex) {
     static int on = -1;
@@ -3114,7 +3114,7 @@ static void mvobj_banks(VkExec *ex) {
 }
 
 // 1: old is cur a little changed or the same (every float within 10 %, at least 1.0 and at most 4.0); *changed: not
-// the same. The cap: TotK's world positions are in the thousands, and 10 % of them let another object's block a few
+// the same. The cap: NX2navi's world positions are in the thousands, and 10 % of them let another object's block a few
 // units away pass as this one moved; nothing moves 4 units in a frame.
 static int mo_similar(const uint8_t *cur, const uint8_t *old, uint64_t n, int *changed) {
     *changed = 0;
@@ -3143,16 +3143,16 @@ static int mo_prev_block(int index, const p_bind_buf *u, VkDescriptorBufferInfo 
     int how;
     *changed = 0;
     // c9 and c11 keep this frame's block. With the copies the address rule finds for c11 and last frame's c9, the
-    // c4 c7 c9 c11 draws (walls, cliffs, arches) got several pixels of motion under a still camera (TOTK_MV_CHECK,
+    // c4 c7 c9 c11 draws (walls, cliffs, arches) got several pixels of motion under a still camera (NX2NAVI_MV_CHECK,
     // those draws alone: 34 % of the picture moving; with c11 kept, 0.8 %). With c11 kept, their c9 still changes every
     // frame while nothing moves (the check's per-draw line: about 120 such draws a frame changed in c9 alone), the
     // object scale the picture shows is 0.6-0.8 of theirs, and with Link stopped against a cliff 40-77 % of the picture
     // got 1-3 px of motion that flipped direction, three times the warp error of the camera's vectors. With c9 kept too,
     // the turning run is as good (object warp error 0.46 of the camera's). Why their copies are wrong is not known.
-    // TOTK_MVPREV_SKIP=<hex bank mask> (test) replaces the default a00 (bit n: cn).
+    // NX2NAVI_MVPREV_SKIP=<hex bank mask> (test) replaces the default a00 (bit n: cn).
     static long skip = -2;
     if (skip == -2) {
-        const char *e = cfg_get("TOTK_MVPREV_SKIP");
+        const char *e = cfg_get("NX2NAVI_MVPREV_SKIP");
         skip = e && *e ? strtol(e, NULL, 16) : 1L << 9 | 1L << 11;
     }
     if (skip >> (index + 3) & 1) return 0;
@@ -3168,9 +3168,9 @@ static int mo_prev_block(int index, const p_bind_buf *u, VkDescriptorBufferInfo 
     MO.cyc[1] += c2 - c1;
     if (!cur) return 0;
     const uint8_t *old = map + out->offset;
-    static long trust = -2;   // TOTK_MVPREV_TRUST=<hex bank mask> (test): the copy found is taken without the check
+    static long trust = -2;   // NX2NAVI_MVPREV_TRUST=<hex bank mask> (test): the copy found is taken without the check
     if (trust == -2) {
-        const char *e = cfg_get("TOTK_MVPREV_TRUST");
+        const char *e = cfg_get("NX2NAVI_MVPREV_TRUST");
         trust = e && *e ? strtol(e, NULL, 16) : 0;
     }
     if (trust >> (index + 3) & 1) {
@@ -3244,33 +3244,33 @@ static void mvobj_draw_(VkExec *ex, const p_draw_idx *d, VkBuffer ib, VkDeviceSi
     }
     // a position without the scene camera (c4) has a view of its own (c8 c9 c10 [c13]: its c8 is at a new address every
     // frame, last frame's is never found): drawn again it would get this frame's view and no camera motion
-    // (TOTK_MV_CHECK while turning: 6.2 px end-point error against the camera vectors' 1.7)
+    // (NX2NAVI_MV_CHECK while turning: 6.2 px end-point error against the camera vectors' 1.7)
     static int noc4 = -1;
-    if (noc4 < 0) noc4 = rt_knob("MVOBJ_NOC4", "0");   // TOTK_MVOBJ_NOC4=1 (test): drawn again all the same
+    if (noc4 < 0) noc4 = rt_knob("MVOBJ_NOC4", "0");   // NX2NAVI_MVOBJ_NOC4=1 (test): drawn again all the same
     if (!(banks >> 4 & 1) && !noc4) {
         MO.no_out++;
         return;
     }
     // only positions that read an object's own blocks: bones (c5), place (c7) or c6. The rest (terrain and grass: c14
-    // c15 c16, with or without c9) measured no better than the camera's motion (TOTK_MV_CHECK, turning, those draws
+    // c15 c16, with or without c9) measured no better than the camera's motion (NX2NAVI_MV_CHECK, turning, those draws
     // alone: object warp error 0.112 against the camera's 0.113, the object part 0.4 of what the picture shows) and
-    // were half the draws checked and listed. TOTK_MVOBJ_ALL=1 (test) takes them again.
+    // were half the draws checked and listed. NX2NAVI_MVOBJ_ALL=1 (test) takes them again.
     static int all = -1;
     if (all < 0) all = rt_knob("MVOBJ_ALL", "0");
     if (!all && !(banks & (1u << 5 | 1u << 6 | 1u << 7))) {
         MO.no_out++;
         return;
     }
-    // TOTK_MVOBJ_ONLY=<hex bank mask> (test): only draws whose position reads no bank outside the mask (bit n: cn)
+    // NX2NAVI_MVOBJ_ONLY=<hex bank mask> (test): only draws whose position reads no bank outside the mask (bit n: cn)
     static long only = -2;
     if (only == -2) {
-        const char *e = cfg_get("TOTK_MVOBJ_ONLY");
+        const char *e = cfg_get("NX2NAVI_MVOBJ_ONLY");
         only = e && *e ? strtol(e, NULL, 16) : -1;
     }
     if (only >= 0 && banks & ~(uint32_t)only & ~(1u << 4)) return;
-    static long exact = -2;   // TOTK_MVOBJ_EXACT=<hex bank mask> (test): only draws with exactly these position banks
+    static long exact = -2;   // NX2NAVI_MVOBJ_EXACT=<hex bank mask> (test): only draws with exactly these position banks
     if (exact == -2) {
-        const char *e = cfg_get("TOTK_MVOBJ_EXACT");
+        const char *e = cfg_get("NX2NAVI_MVOBJ_EXACT");
         exact = e && *e ? strtol(e, NULL, 16) : -1;
     }
     if (exact >= 0 && banks != (uint32_t)exact) return;
@@ -3333,7 +3333,7 @@ static void mvobj_draw_(VkExec *ex, const p_draw_idx *d, VkBuffer ib, VkDeviceSi
     ms.chmask.mask = 0x3;   // r and g of target 0
     ms.ms.a2c = 0;
     // the game's own test with its equal case (LESS -> LEQUAL, GREATER -> GEQUAL): the surface the draw left in the
-    // scene depth passes, anything nearer hides it (TOTK_MVOBJ_EQUAL=1: EQUAL, for comparison)
+    // scene depth passes, anything nearer hides it (NX2NAVI_MVOBJ_EQUAL=1: EQUAL, for comparison)
     static int eq = -1;
     if (eq < 0) eq = rt_knob("MVOBJ_EQUAL", "0");
     int df = B.st.ds.df;
@@ -3473,7 +3473,7 @@ int vk_mvobj_execute(VkExec *ex, uint64_t cam, VkImageView mv, VkImageView depth
                (unsigned long long)MO.storage, (unsigned long long)MO.no_fs, (unsigned long long)MO.other_cam);
     if (!MQ.n) return 0;
     static int exec = -1;
-    if (exec < 0) exec = rt_knob("MVOBJ_EXEC", "1");   // TOTK_MVOBJ_EXEC=0: listed, never recorded (test)
+    if (exec < 0) exec = rt_knob("MVOBJ_EXEC", "1");   // NX2NAVI_MVOBJ_EXEC=0: listed, never recorded (test)
     if (!exec) {
         mo_drop();
         return 0;
@@ -3537,7 +3537,7 @@ static void op_draw_mesh(VkExec *ex, const p_draw_mesh *d) {
     PFN_vkCmdDrawMeshTasksEXT fn = draw_mesh_fn();
     if (!fn) return warn_once(W_MESH, "mesh draws need VK_EXT_mesh_shader: skipped");
     static int on = -1;
-    if (on < 0) on = rt_knob("MESH", "1");   // TOTK_MESH=0: mesh draws are skipped (diagnosis)
+    if (on < 0) on = rt_knob("MESH", "1");   // NX2NAVI_MESH=0: mesh draws are skipped (diagnosis)
     if (!d->count || !on) return;
     c0_binst = 0;
     if (!prepare_draw_ex(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, 1)) return;
@@ -3629,7 +3629,7 @@ static void op_draw(VkExec *ex, const p_draw *d) {
 // Primitive restart of an indexed draw. NVN restarts strips wherever an index equals the SetPrimitiveRestart value;
 // Vulkan restarts only at the all-ones value of the bound index type, and only strips and fans without
 // primitiveTopologyListRestart. Byte indices are widened to 16 bits, so their restart value becomes 0xffff
-// (op_draw_idx). Without restart the 0xffff entries of TOTK's terrain and cliff strips fetch vertex 65535 + base and
+// (op_draw_idx). Without restart the 0xffff entries of NX2NAVI's terrain and cliff strips fetch vertex 65535 + base and
 // the triangles around them drop out.
 static int restart_for(const VkExec *ex, int prim, int itype) {
     if (!ex->prim_restart.enable) return 0;
@@ -3713,7 +3713,7 @@ static void op_draw_idx_ind(VkExec *ex, const p_draw_idx_ind *d) {
 // has no model for. Instead of leaving the outputs untouched (black), the largest bound storage image receives a
 // linear blit of the largest bound sampled RGBA8 texture that is a different image and no larger (the networks'
 // 10-bit intermediates are only partly meaningful as pictures, so they are not a source): what an upscaler
-// approximates. In-place passes (the output also sampled) are left alone. TOTK_CS_FALLBACK=0 turns it off.
+// approximates. In-place passes (the output also sampled) are left alone. NX2NAVI_CS_FALLBACK=0 turns it off.
 // sRGB-ness of the RGBA8 formats the fallback blits: a blit converts between encodings, the game's network writes the
 // bits through a UNORM view, so a UNORM source and an sRGB target go through a scratch image in the source's format
 // (blit, scaling only) and then a raw copy.
@@ -3773,7 +3773,7 @@ static int uses_tensor_ops(const VkExec *ex) {
     return v;
 }
 
-// TOTK_NATIVE_TENSOR=1: tensor-core programs run their translation (HMMA, LDSM and MOVM lowered to warp shuffles in
+// NX2NAVI_NATIVE_TENSOR=1: tensor-core programs run their translation (HMMA, LDSM and MOVM lowered to warp shuffles in
 // tools/xlate/AmpereLowering.cs Hmma, Ldsm, Movm). Off by default: the lowered networks do not match the hardware yet
 // (Ocarina's scene upscaler wrote infinities and noise), so they take the fallback below as untranslated ones do.
 static int native_tensor(const VkExec *ex) {
@@ -3816,7 +3816,7 @@ static void untranslated_dispatch_fallback(VkExec *ex) {
             src = t;
     }
     if (dst && src) vk_texture_storage_bound_locked(dst);
-    if (dst && src && cfg_get("TOTK_LOG_CS_BINDS")) {   // each distinct (program, source, target) once, 256 at most
+    if (dst && src && cfg_get("NX2NAVI_LOG_CS_BINDS")) {   // each distinct (program, source, target) once, 256 at most
         static struct { uint64_t prog, s, d; } seen[256];
         static int n;
         uint64_t pr = ex->prog ? ex->prog->serial : 0;
@@ -3860,7 +3860,7 @@ static void untranslated_dispatch_fallback(VkExec *ex) {
     if (!si || !di) return;
     static int logged;
     if (!logged++) rt_log("vk_exec: untranslated compute dispatch: its output image (%ux%u) gets a linear blit of its "
-                          "largest input (%ux%u) instead (TOTK_CS_FALLBACK=0 turns this off)", dw, dh, sw, sh);
+                          "largest input (%ux%u) instead (NX2NAVI_CS_FALLBACK=0 turns this off)", dw, dh, sw, sh);
     vk_exec_pass_end(ex);
     vk_exec_barrier(ex);
     VkImageBlit bl = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}};
@@ -3887,9 +3887,9 @@ static void untranslated_dispatch_fallback(VkExec *ex) {
         vkCmdPipelineBarrier2(ex->cb, &dep);
         si = e5;
     }
-#if TOTK_TONEMAP_STANDIN
+#if NX2NAVI_TONEMAP_STANDIN
     // Off: every build with this call lost the device right after the first gameplay load, even with the call never
-    // reached at run time (TOTK_TM_DISPATCH=2/3), while the build without it ran clean; not understood yet (round 24).
+    // reached at run time (NX2NAVI_TM_DISPATCH=2/3), while the build without it ran clean; not understood yet (round 24).
     VkImage tm = e5 && dst_view ? vk_tonemap_record(ex->cb, e5, VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, dw, dh) : VK_NULL_HANDLE;
     if (tm) {   // the tonemapped picture, already at the target's size, then the same blit as below
         B.pipe[1] = VK_NULL_HANDLE;   // the replay must bind its compute pipeline again
@@ -3950,7 +3950,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     dummies_init();
     int present;
     const GfxShader *cs = shader_for(ex, NVN_STAGE_CS, &present, NULL, 0);   // synchronous: a skipped dispatch changes results
-    if (cfg_get("TOTK_LOG_CS_BINDS")) {   // diagnosis: the compute bindings of the first dispatch of each program
+    if (cfg_get("NX2NAVI_LOG_CS_BINDS")) {   // diagnosis: the compute bindings of the first dispatch of each program
         static uint64_t seen[64]; static int nseen;
         int known = 0;
         for (int i = 0; i < nseen; i++) known |= seen[i] == ex->prog->serial;
@@ -3971,7 +3971,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     const VkPipeInfo *info = NULL;
     VkPipeline p = vk_pipeline_compute(cs, &info);
     if (!p || !info) return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
-    if ((info->pool && !pool_on()) || shader_skipped(cs)) return;   // TOTK_POOL=0, TOTK_SKIP_SHADERS
+    if ((info->pool && !pool_on()) || shader_skipped(cs)) return;   // NX2NAVI_POOL=0, NX2NAVI_SKIP_SHADERS
     vk_exec_barrier(ex);   // ends the pass; earlier writes are visible to the shader
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     c0_dim[0] = (uint32_t)d->x, c0_dim[1] = (uint32_t)d->y, c0_dim[2] = (uint32_t)d->z;
@@ -4000,7 +4000,7 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     const VkPipeInfo *info = NULL;
     VkPipeline p = vk_pipeline_compute(cs, &info);
     if (!p || !info) return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
-    if ((info->pool && !pool_on()) || shader_skipped(cs)) return;   // TOTK_POOL=0, TOTK_SKIP_SHADERS
+    if ((info->pool && !pool_on()) || shader_skipped(cs)) return;   // NX2NAVI_POOL=0, NX2NAVI_SKIP_SHADERS
     vk_exec_barrier(ex);
     VK_MEM_USE(ip);
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_COMPUTE, p);
@@ -4163,5 +4163,5 @@ void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     }
 }
 
-// The last executed list's draws as " <position banks>/<changed banks>:<draws>" (bit n: cn), for TOTK_MV_CHECK's lines.
+// The last executed list's draws as " <position banks>/<changed banks>:<draws>" (bit n: cn), for NX2NAVI_MV_CHECK's lines.
 const char *vk_mvobj_frame_masks(void) { return fm_last; }

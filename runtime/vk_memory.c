@@ -2,7 +2,7 @@
 // buffers, the virtual-pool page table, GPU address resolution, page write generations for re-uploads, and the
 // upload batch (command buffer, staging buffers, deferred destruction) that vk_texture.c records into.
 //
-// Behaviour ported from MacNativeGames games/totk/third_party/d2r_gfx/gfx/nvn/totk_vpool.c (request checks, unmap
+// Behaviour ported from MacNativeGames games/totk/third_party/d2r_gfx/gfx/nvn/nx2navi_vpool.c (request checks, unmap
 // semantics, 64 KiB pages) and nvn_dirty.c (generation stamps: a texture is stale when a covered page carries a
 // generation newer than its upload), @ b75be8cf (MIT, Copyright (c) 2026 jhaizhou; origin d2r-mobile); and from LAS
 // Recomp runtime/nvn/vulkan/exec.c:2094-2131 (vk_pages_changed: every write-watch query resets the OS bits, so each
@@ -50,7 +50,7 @@ typedef struct PoolRec {
     VPage *pt;                         // POOL_VIRT: size / 64 KiB entries
     uint64_t npages;
     volatile int32_t used;                // resolved at least once: the GPU may still read it at finalize
-    // TOTK_TRACE=perf dirty census (vk_mem_dirty_submit), replay thread under the submit lock only:
+    // NX2NAVI_TRACE=perf dirty census (vk_mem_dirty_submit), replay thread under the submit lock only:
     uint32_t bound_sub;                // last submit that bound it as a buffer (dirty_sub), 0 never
     uint32_t synced_gen;               // page generation its lazy-mirror count covers; DIRTY_UNSYNCED until scanned
     uint8_t bufbound;                  // ever bound as a vertex, index, uniform, storage or indirect buffer
@@ -218,7 +218,7 @@ static int alloc_physical(VkCtx *c, PoolRec *r) {
 int vk_fix_zero(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("TOTK_FIX_ZERO");
+        on = cfg_bool("NX2NAVI_FIX_ZERO");
     }
     return on;
 }
@@ -252,7 +252,7 @@ int vk_pool_init(pool_t *p) {
     // virtual pools that map it. Either gets device-local memory: 1.4.3's CPU never writes its 0x18c pool's storage
     // (unchanged over 3600 frames of the intro), so the guest storage and the GPU copy need no sync.
     if ((p->flags & NVN_MEMORY_POOL_FLAGS_GPU_NO_ACCESS) && !(p->flags & NVN_MEMORY_POOL_FLAGS_PHYSICAL)) return 1;
-    // A pool of zero bytes (TotK makes some now and then) holds no address the GPU can use: it gets no record. A record
+    // A pool of zero bytes (NX2navi makes some now and then) holds no address the GPU can use: it gets no record. A record
     // would import 0 bytes (invalid usage; the driver refuses the memory) and put an empty range into the index at the
     // pool's address, where a lookup of the pool that starts there found the empty one first. vk_pool_fini finds no
     // record for it and does nothing.
@@ -339,7 +339,7 @@ void vk_pool_fini(pool_t *p) {
     else destroy_rec(c, r);
 }
 
-// Requests were checked by the front end (nvn_api_core.c, MNG totk_vpool.c); apply them in order.
+// Requests were checked by the front end (nvn_api_core.c, MNG nx2navi_vpool.c); apply them in order.
 int vk_pool_map_virtual(pool_t *v, int n, const void *requests) {
     const nvn_mapping_t *rq = requests;
     plat_mutex_lock(&pool_lock);
@@ -368,7 +368,7 @@ int vk_pool_map_virtual(pool_t *v, int n, const void *requests) {
 // Per-thread copies of resolved import and physical pools that overlap no other index entry (so pidx_find picks them for
 // any range inside), valid while pool_gen is unchanged: the replay resolves a few dozen pools thousands of times per
 // frame (16 vertex streams and every buffer binding of each draw). Direct-mapped by the 4 KiB page of the address, so
-// a hit is one compare however many pools a frame touches. TOTK_RESOLVE_CHECK=1 compares every hit with the locked
+// a hit is one compare however many pools a frame touches. NX2NAVI_RESOLVE_CHECK=1 compares every hit with the locked
 // lookup and stops on a difference.
 static int rec_class(const PoolRec *r) {
     if (r->kind != POOL_IMPORT) return VK_MCLS_DEVICE;
@@ -385,7 +385,7 @@ static ResolveHit *rhit_slot(uint64_t addr) { return &rhit[(addr >> 12 ^ addr >>
 static int resolve_check_on(void) {
     static int on = -1;
     if (on < 0) {
-        const char *e = cfg_get("TOTK_RESOLVE_CHECK");
+        const char *e = cfg_get("NX2NAVI_RESOLVE_CHECK");
         on = e && *e && strcmp(e, "0");
     }
     return on;
@@ -501,7 +501,7 @@ static void flag_names(uint32_t f, char *buf, size_t n) {
 
 // One line per (kind, flags) group of the live pools, then the bytes the replay bound or copied per frame by pool
 // class since the previous census (the first one: since frame 1200). Logged at frame 1800 (in the world from the
-// run-game saves), at frame 600, and with TOTK_TRACE=perf every 1800 frames.
+// run-game saves), at frame 600, and with NX2NAVI_TRACE=perf every 1800 frames.
 static void dirty_frame(uint64_t frame);
 
 static void mirror_log(uint64_t frame);
@@ -778,7 +778,7 @@ void vk_mem_snap_stats(uint64_t *checks, uint64_t *calls, uint64_t *untracked) {
     *untracked = __atomic_exchange_n(&n_snap_untracked, 0, __ATOMIC_RELAXED);
 }
 
-// ---------------------------------------------------------------- dirty census (TOTK_TRACE=perf)
+// ---------------------------------------------------------------- dirty census (NX2NAVI_TRACE=perf)
 // What a device-local mirror of the buffer-bound pools would upload. The replay notes every
 // imported pool it binds as a vertex, index, uniform, storage or indirect buffer (vk_mem_bound_note). At the start of
 // each submit one write-watch query per run of such pools stamps the pages written since with a new generation, in the
@@ -842,7 +842,7 @@ static int query_stamp(uint64_t lo, uint64_t hi, uint32_t g) {
 // - GPU -> guest: the replay notes each GPU write into CPU-visible memory at record time (vk_mem_gpu_pending) and
 //   reports it at the fence (vk_gpu_written), which copies those bytes back into guest memory. Until then the CPU
 //   copies skip them: a page the CPU and the GPU both write keeps the GPU's bytes.
-// TOTK_SHADOW=1/0 forces the mode on or off; the default is on for Linux and Wine.
+// NX2NAVI_SHADOW=1/0 forces the mode on or off; the default is on for Linux and Wine.
 typedef struct { uint64_t lo, hi; } SRange;
 static PlatMutex shadow_lock = PLAT_MUTEX_INIT;   // after pool_lock; before gen_lock
 static PoolRec **stouch;                          // shadow_lock: pools resolved since the last sync
@@ -1133,7 +1133,7 @@ static void dirty_frame(uint64_t frame) {
 // ---------------------------------------------------------------- VRAM mirror of buffer-bound pools
 // An imported pool keeps vertices, indices, constants
 // and storage buffers in system memory, so a discrete GPU reads them over PCIe on every draw (GTX 1050 Ti and RTX
-// 3090 Ti: about 110 ms of GPU time per frame in the field). In mirror mode (device class discrete, TOTK_MEMORY) an
+// 3090 Ti: about 110 ms of GPU time per frame in the field). In mirror mode (device class discrete, NX2NAVI_MEMORY) an
 // imported pool gets a device-local buffer over its imported range the first time the replay uses it as a vertex,
 // index, uniform, storage or indirect buffer (vk_mem_use). From then on those bindings, and the buffer copies, fills
 // and uniform updates that touch the pool (vk_mem_pick), use the mirror at the same offsets. Guest memory stays what
@@ -1143,14 +1143,14 @@ static void dirty_frame(uint64_t frame) {
 //   consumer, the shared page generations) and every page stamped after the mirror's mgen goes into a copy; so do the
 //   nvnMemoryPoolFlushMappedRange ranges, each on its own: one span from the lowest to the highest flush of a 252 MiB
 //   pool copied up to the whole pool for a few MiB flushed, 30-50 ms of GPU time over PCIe 3.0 x8 in crowded towns
-//   (TOTK_FLUSH_SPAN=1 restores it). Writes between the ranges need no copy: the write watch sees them. The first use
+//   (NX2NAVI_FLUSH_SPAN=1 restores it). Writes between the ranges need no copy: the write watch sees them. The first use
 //   copies the whole range. The copies run in a prologue command
 //   buffer that vk_sync.c submits right before the part that accessed the mirror first, between full barriers.
 //   vk_mem_mirror_begin snaps the regions of the pools the previous submission accessed in a few merged queries.
 // - GPU -> guest: what the replay writes into a mirror (storage buffers its shaders write, buffer copies, fills,
 //   uniform updates, texture-to-buffer copies: vk_mem_gpu_wrote) goes back into the imported buffer at the end of the
 //   submission, exact byte ranges, before the fence signals (vk_mem_mirror_end).
-// - TOTK_MEMORY=verify: every submission also copies up to VERIFY_BYTES of mirror pages, round robin, into host memory;
+// - NX2NAVI_MEMORY=verify: every submission also copies up to VERIFY_BYTES of mirror pages, round robin, into host memory;
 //   at its fence the pages the CPU has not written since their sync are compared with guest memory.
 // A pool stays imported when its mirror would not fit the VRAM budget, its range is not write-watched, it overlaps
 // another pool or the allocation fails.
@@ -1172,7 +1172,7 @@ static int npend, cpend, nwbl, cwbl;
 static VkBufferCopy *mregions;         // replay: vkCmdCopyBuffer regions
 static int cregions;
 static PlatMutex flush_lock = PLAT_MUTEX_INIT;
-static int flush_cap = FLUSH_RANGES;   // ranges a pool keeps; 1 with TOTK_FLUSH_SPAN=1
+static int flush_cap = FLUSH_RANGES;   // ranges a pool keeps; 1 with NX2NAVI_FLUSH_SPAN=1
 
 typedef struct {
     uint64_t subs, syncs, upload_bytes, upload_copies, first_n, first_bytes, wb_bytes, wb_copies, wb_ranges;
@@ -1187,37 +1187,37 @@ static volatile int64_t m_live_n, m_live_bytes, m_refused_n[MR_N], m_refused_byt
 static volatile int64_t m_flush_calls, m_flush_bytes, v_pages, v_skipped, v_mismatch;
 
 static void mirror_mode(int discrete) {
-    const char *e = cfg_value("TOTK_MEMORY");
+    const char *e = cfg_value("NX2NAVI_MEMORY");
     int mode = discrete ? 1 : 0;   // 0 import, 1 mirror, 2 verify
     const char *why = discrete ? "auto, discrete gpu" : "auto, uma";
     if (strcmp(e, "auto")) {
-        if (!strcmp(e, "import")) mode = 0, why = "TOTK_MEMORY=import";
-        else if (!strcmp(e, "mirror")) mode = 1, why = "TOTK_MEMORY=mirror";
-        else if (!strcmp(e, "verify")) mode = 2, why = "TOTK_MEMORY=verify";
-        else rt_log("mem: TOTK_MEMORY=%s is not import, mirror, verify or auto: auto", e);
+        if (!strcmp(e, "import")) mode = 0, why = "NX2NAVI_MEMORY=import";
+        else if (!strcmp(e, "mirror")) mode = 1, why = "NX2NAVI_MEMORY=mirror";
+        else if (!strcmp(e, "verify")) mode = 2, why = "NX2NAVI_MEMORY=verify";
+        else rt_log("mem: NX2NAVI_MEMORY=%s is not import, mirror, verify or auto: auto", e);
     }
     vk_mirror_on = mode > 0;
     mirror_verify = mode == 2;
-    const char *g = cfg_get("TOTK_MIRROR_GAP");
+    const char *g = cfg_get("NX2NAVI_MIRROR_GAP");
     mirror_gap = g && *g ? atoi(g) : 2;
     if (mirror_gap < 0) mirror_gap = 0;
     // Submissions a region stays unwritten before it is frozen. 60 rather than 300: in a fight 100 of the 257 MiB
     // queried a frame lay in regions idle for 30-299 submissions, and a thaw by a write costs about 60 us.
     if (rt_knob("FLUSH_SPAN", "0")) {
         flush_cap = 1;
-        rt_log("mem: a pool's flushes copy one span from the lowest to the highest (TOTK_FLUSH_SPAN=1)");
+        rt_log("mem: a pool's flushes copy one span from the lowest to the highest (NX2NAVI_FLUSH_SPAN=1)");
     }
-    const char *fi = cfg_get("TOTK_FREEZE_IDLE");
+    const char *fi = cfg_get("NX2NAVI_FREEZE_IDLE");
     freeze_idle = fi && *fi ? atoi(fi) : 60;
     if (freeze_idle < 0) freeze_idle = 0;
-    const char *sh = cfg_get("TOTK_SHADOW");
+    const char *sh = cfg_get("NX2NAVI_SHADOW");
 #ifdef _WIN32
     shadow_on = sh && *sh ? strcmp(sh, "0") != 0 : plat_is_wine();
 #else
     shadow_on = !sh || !*sh || strcmp(sh, "0");
 #endif
     if (shadow_on) rt_log("mem: shadow storage: CPU-visible pools are host-visible copies of guest memory, not imports%s",
-                          sh && *sh ? " (TOTK_SHADOW)" : "");
+                          sh && *sh ? " (NX2NAVI_SHADOW)" : "");
     rt_log("mem: mode %s (%s): %s", mode == 2 ? "verify" : mode ? "mirror" : "import", why,
            mode ? "pools used as buffers get a device-local mirror" : "every CPU-visible pool is imported host memory");
     // Import is the integrated-GPU mode. On a discrete card every draw reads the pools over PCIe (the comment above
@@ -1463,7 +1463,7 @@ int vk_mem_mirror_probe(uint64_t addr) {
 
 // ---- write-back merge
 // A storage buffer a shader writes whole records of does not
-// go back to guest memory as a plain copy. The CPU may write fields of the same records while the GPU runs: TotK's
+// go back to guest memory as a plain copy. The CPU may write fields of the same records while the GPU runs: NX2navi's
 // particle emitters write a new particle's whole record into a free slot of a buffer that the simulation shaders update
 // (the waterfall splashes and mist, 2026-11-02), and a plain copy puts the mirror's stale copy of those words back over
 // them. Instead:
@@ -1475,7 +1475,7 @@ int vk_mem_mirror_probe(uint64_t addr) {
 // - vk_mem_mirror_end: shaders/wb_merge.comp writes each 32-bit word that differs between the mirror and the snapshot
 //   into the pool's imported buffer (wb_merge_record), one dispatch per pool and group of ranges.
 // Words the GPU left unchanged keep the CPU's value; a word both changed takes the GPU's, as a plain copy would.
-// TOTK_WB_MERGE=0 restores the plain copies; so does a pipeline or allocation failure.
+// NX2NAVI_WB_MERGE=0 restores the plain copies; so does a pipeline or allocation failure.
 #define SNAP_CHUNK (1u << 20)
 #define MERGE_SPAN (64ull << 20)   // the bytes of one pool a merge dispatch binds at most
 #define MERGE_WORDS (65535u * 64u) // the words one merge dispatch covers at most
@@ -1541,8 +1541,8 @@ fail:
 
 static int merging(void) {
     if (merge_on < 0) {
-        merge_on = cfg_bool("TOTK_WB_MERGE");
-        rt_log("mem: write-back merge %s (TOTK_WB_MERGE)", merge_on ? "on" : "off");
+        merge_on = cfg_bool("NX2NAVI_WB_MERGE");
+        rt_log("mem: write-back merge %s (NX2NAVI_WB_MERGE)", merge_on ? "on" : "off");
     }
     if (!merge_on) return 0;
     if (!WM.tried) merge_init(vk_ctx());
@@ -1747,7 +1747,7 @@ int vk_mem_flush_add_probe(void) {
     n = 0;
     n = flush_add(l, n, 0x10000, 0x11000, 1);
     n = flush_add(l, n, 0x40000, 0x41000, 1);
-    if (n != 1 || l[0].lo != 0x10000 || l[0].hi != 0x41000) return 5;                      // TOTK_FLUSH_SPAN=1
+    if (n != 1 || l[0].lo != 0x10000 || l[0].hi != 0x41000) return 5;                      // NX2NAVI_FLUSH_SPAN=1
     return 0;
 }
 
@@ -1979,7 +1979,7 @@ int vk_mem_mirror_end(VkCommandBuffer cb, uint64_t fence) {
     return rec;
 }
 
-// One summary line: with TOTK_TRACE=perf every 60 frames, else at frames 600 and 1800.
+// One summary line: with NX2NAVI_TRACE=perf every 60 frames, else at frames 600 and 1800.
 static void mirror_log(uint64_t frame) {
     static uint64_t last, ww_last;
     plat_mutex_lock(&gen_lock);
@@ -2028,7 +2028,7 @@ static void mirror_log(uint64_t frame) {
            a.flush_bytes / f / M, a.flush_calls / f, a.flush_sum / f / M);
 }
 
-// With TOTK_TRACE=perf every 600 frames: what holds device-local memory, to see what grows over a long session.
+// With NX2NAVI_TRACE=perf every 600 frames: what holds device-local memory, to see what grows over a long session.
 // VMA's blocks and allocations on the device-local heaps, texture entries with their own memory, the VRAM mirrors and
 // the objects waiting for their last submission to retire.
 static void vram_log(uint64_t frame) {
@@ -2301,7 +2301,7 @@ static void defer(int kind, uint64_t handle, VmaAllocation alloc) {
     // the same submission. Stamped with the last submitted value, the object went as soon as the GPU reached it,
     // before the submission that names it ran, and with the recorder thread (vk_rec.c) behind, before the recorder
     // made the call that names it. LAS Recomp and Savage Wind Recomp stamp every deferral with the submission being
-    // recorded (runtime/nvn/vulkan/textures.c defer: vk_pending_seq). TOTK_DEFER_STAMP=0 brings back the old stamp.
+    // recorded (runtime/nvn/vulkan/textures.c defer: vk_pending_seq). NX2NAVI_DEFER_STAMP=0 brings back the old stamp.
     static int stamp = -1;
     if (stamp < 0) stamp = rt_knob("DEFER_STAMP", "1") != 0;
     uint64_t tl = tl_noted, rf = stamp ? vk_exec_recording_fence() : 0;

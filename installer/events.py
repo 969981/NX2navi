@@ -29,7 +29,7 @@ def load_catalog(path=CATALOG):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-GAME_EXE = 'totk.exe' if os.name == 'nt' else 'totk'   # {game_exe} in the catalogs
+GAME_EXE = 'nx2navi.exe' if os.name == 'nt' else 'nx2navi'   # {game_exe} in the catalogs
 
 
 def render(catalog, id, params=None):

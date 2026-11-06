@@ -4,7 +4,7 @@
              return false;
          }
  
-+        // TOTK: true when a vertex shader should also write last frame's position (Transforms/MotionPrevious.cs),
++        // NX2NAVI: true when a vertex shader should also write last frame's position (Transforms/MotionPrevious.cs),
 +        // the user output location it went to (-1: none) and the banks the position depends on (bit n: cn).
 +        bool QueryMotionPrevious() => false;
 +
@@ -22,7 +22,7 @@
              _stagePrefix = GetShaderStagePrefix(stage);
  
 -            _cbSlotToBindingMap = new SetBindingPair[18];
-+            _cbSlotToBindingMap = new SetBindingPair[32];   // TOTK: slots 18-31 for Transforms/MotionPrevious.cs
++            _cbSlotToBindingMap = new SetBindingPair[32];   // NX2NAVI: slots 18-31 for Transforms/MotionPrevious.cs
              _sbSlotToBindingMap = new SetBindingPair[16];
              _cbSlotToBindingMap.AsSpan().Fill(new(-1, -1));
              _sbSlotToBindingMap.AsSpan().Fill(new(-1, -1));
@@ -35,7 +35,7 @@
 +
 +namespace Ryujinx.Graphics.Shader.Translation.Transforms
 +{
-+    // TOTK: last frame's position for per-object motion vectors (runtime/vk_exec_draw.c, vk_mvprev.c). A vertex shader's
++    // NX2NAVI: last frame's position for per-object motion vectors (runtime/vk_exec_draw.c, vk_mvprev.c). A vertex shader's
 +    // position depends on uniform banks of this frame: the camera (c4), the object's place (c7), its bones (c5), the
 +    // clock that moves wind and water (c14), and so on. Every operation the position depends on that reads one of the
 +    // user banks c3..c16, directly or through other values, is computed a second time beside the original, reading slot

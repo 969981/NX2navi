@@ -6,7 +6,7 @@
 //
 // Objects are stored in place in the NVN object memory the game provides (nvn_obj.h); every argument is read from the
 // AAPCS64 registers (host.h arg_x / arg_s / arg_p) and every result returned with ret_x. Command-buffer procs are in
-// nvn_api_cmd.c, the TOTK extension procs in nvn_ext.c.
+// nvn_api_cmd.c, the NX2NAVI extension procs in nvn_ext.c.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -190,7 +190,7 @@ static void tex_release(tex_t *o) {
 NVN_API(nvnTextureInitialize) {
     tex_t *o = arg_p(c, 0);
     const tex_builder_t *s = arg_p(c, 1);
-    if (cfg_get("TOTK_LOG_TEX_FLAGS")) {   // diagnosis: each distinct (flags, format) pair once
+    if (cfg_get("NX2NAVI_LOG_TEX_FLAGS")) {   // diagnosis: each distinct (flags, format) pair once
         static uint64_t seen[256]; static int n;
         uint64_t key = (uint64_t)(uint32_t)s->d.flags << 32 | (uint32_t)s->d.format;
         int known = 0;
@@ -478,7 +478,7 @@ NVN_API(nvnProgramSetShadersExt) {
 // nvnProgramInitializeFromBuilder(program, builder). No driver reference is available (the NVN2 driver is not in the
 // title's modules), so the signatures are taken to mirror nvnProgramSetShaders: SetShaders(builder, n, shader data).
 // The builder keeps the caller's array pointer, as NVN builders reference their inputs until the object is made.
-// TOTK_SHADER_DUMP=<dir> writes each stage's control section and code there for studying the NVN2 layout.
+// NX2NAVI_SHADER_DUMP=<dir> writes each stage's control section and code there for studying the NVN2 layout.
 typedef struct { uint32_t magic; int32_t n; NVNdevice *dev; const NVNshaderData *sd; } prog_builder_t;
 #define NVN_PROG_BUILDER_MAGIC 0x50524742u   // "BGRP"
 
@@ -494,7 +494,7 @@ static void shader_dump(const prog_t *o, int n, const NVNshaderData *sd) {
         if (magic == 0x98761234u && st < 32 && !(__atomic_fetch_or(&seen, 1u << st, __ATOMIC_RELAXED) >> st & 1))
             rt_log("nvn: first NVN2 program with stage %u (%d stages in the program)", st, n);
     }
-    const char *dir = cfg_get("TOTK_SHADER_DUMP");
+    const char *dir = cfg_get("NX2NAVI_SHADER_DUMP");
     if (!dir || !*dir) return;
     static volatile int32_t count;
     int k = __atomic_fetch_add(&count, 1, __ATOMIC_RELAXED);
@@ -541,7 +541,7 @@ NVN_API(nvnProgramInitializeFromBuilder) {
         ret_x(c, 0);
         return;
     }
-    const char *mode = cfg_get("TOTK_NVN2_PROGRAMS");   // =off: refuse every program (diagnosis)
+    const char *mode = cfg_get("NX2NAVI_NVN2_PROGRAMS");   // =off: refuse every program (diagnosis)
     if (mode && !strcmp(mode, "off")) {
         ret_x(c, 0);
         return;
@@ -666,7 +666,7 @@ NVN_API(nvnWindowBuilderSetTextures) {
     b->ntex = n;
     for (int i = 0; i < n; i++) b->tex[i] = t[i];
 }
-// TOTK sets two active images; the limit bounds what WindowAcquireTexture hands out. No prototype in nvn.h.
+// NX2NAVI sets two active images; the limit bounds what WindowAcquireTexture hands out. No prototype in nvn.h.
 NVN_API(nvnWindowBuilderSetNumActiveTextures) {
     int n = (int)arg_x(c, 1);
     if (n < 2 || n > 4) rt_fatal("nvn: unsupported active texture count %d", n);
@@ -727,7 +727,7 @@ NVN_API(nvnWindowSetCrop) {
 // ---------- Present pacing
 // The vsync thread ticks at a fixed 60 Hz whatever the monitor does, so one game frame lasts `interval` ticks. With
 // the real-time frame step (frame_rate.c) game speed does not depend on the interval, so a frame is shown when it is
-// ready, at most at the frame limit (TOTK_FPS_LIMIT: 30 to 240 per second or the monitor's rate): holding it to the
+// ready, at most at the frame limit (NX2NAVI_FPS_LIMIT: 30 to 240 per second or the monitor's rate): holding it to the
 // 2nd or 3rd tick would only add latency and 50 ms frames.
 #define VSYNC_HZ 60ull
 static uint64_t present_period(const win_t *o) {

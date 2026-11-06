@@ -93,26 +93,26 @@ void vk_crumbs_report(void) {
 static VkPassMark ring[VK_PASS_MARKS];
 static uint32_t seq;                        // marks made; only the replay thread writes it
 
-// TOTK_PASS_CRUMBS: unset, buffer marks where VK_AMD_buffer_marker exists; 1, also NVIDIA checkpoints; 0, neither.
+// NX2NAVI_PASS_CRUMBS: unset, buffer marks where VK_AMD_buffer_marker exists; 1, also NVIDIA checkpoints; 0, neither.
 int vk_pass_marks_want_nv(void) {
-    const char *e = cfg_get("TOTK_PASS_CRUMBS");
+    const char *e = cfg_get("NX2NAVI_PASS_CRUMBS");
     return e && *e && strcmp(e, "0") != 0;
 }
 
 static void pass_marks_init(VkCtx *c) {
-    const char *e = cfg_get("TOTK_PASS_CRUMBS");
+    const char *e = cfg_get("NX2NAVI_PASS_CRUMBS");
     int off = e && !strcmp(e, "0");
     set_checkpoint = c->has_nv_checkpoints
                          ? (PFN_vkCmdSetCheckpointNV)vkGetDeviceProcAddr(c->device, "vkCmdSetCheckpointNV") : NULL;
     pm_amd = !off && write_marker && words;
     vk_pass_marks_on = pm_amd || set_checkpoint;
     if (vk_pass_marks_on)
-        rt_log("vk: pass marks on (%s%s%s; TOTK_PASS_CRUMBS=0 turns them off%s)", pm_amd ? "VK_AMD_buffer_marker" : "",
+        rt_log("vk: pass marks on (%s%s%s; NX2NAVI_PASS_CRUMBS=0 turns them off%s)", pm_amd ? "VK_AMD_buffer_marker" : "",
                pm_amd && set_checkpoint ? " and " : "", set_checkpoint ? "VK_NV_device_diagnostic_checkpoints" : "",
                set_checkpoint ? "" : ", =1 adds NVIDIA checkpoints where the driver has them");
     else
-        rt_log("vk: pass marks off (%s)", off ? "TOTK_PASS_CRUMBS=0"
-                                              : "no VK_AMD_buffer_marker; TOTK_PASS_CRUMBS=1 asks for NVIDIA checkpoints");
+        rt_log("vk: pass marks off (%s)", off ? "NX2NAVI_PASS_CRUMBS=0"
+                                              : "no VK_AMD_buffer_marker; NX2NAVI_PASS_CRUMBS=1 asks for NVIDIA checkpoints");
 }
 
 void vk_pass_mark_cmd(VkCommandBuffer cb, uint32_t id, int end) {

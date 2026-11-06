@@ -1,4 +1,4 @@
-// DLAA: NVIDIA DLSS at the scene's own size (TOTK_DLAA, totk.ini dlaa). NGX is loaded at run time from the driver's
+// DLAA: NVIDIA DLSS at the scene's own size (NX2NAVI_DLAA, nx2navi.ini dlaa). NGX is loaded at run time from the driver's
 // NGX core: on Windows _nvngx.dll, found through HKLM\SOFTWARE\NVIDIA Corporation\Global\NGXCore; on Linux
 // libnvidia-ngx.so.1, which the NVIDIA driver installs on the library path. NGX loads the DLSS model from the folder of
 // the executable: nvngx_dlss.dll on Windows, libnvidia-ngx-dlss.so.<version> on Linux. No NVIDIA SDK code or header is
@@ -108,7 +108,7 @@ static int p_getp(const NgxParam *p, const char *n, void **v) { return NGX_OK(((
 // dlaa applies after a restart; switched off, nothing else of DLAA runs.
 int vk_dlaa_wanted(void) {
     static int wanted = -1;
-    if (wanted < 0) wanted = cfg_bool("TOTK_DLAA");
+    if (wanted < 0) wanted = cfg_bool("NX2NAVI_DLAA");
     return wanted;
 }
 
@@ -192,12 +192,12 @@ static int vtable_ok(void) {
     unsigned u = 0;
     float f = 0;
     void *v = NULL;
-    p_seti(p, "TotK.Test.I", -12345);
-    p_setu(p, "TotK.Test.U", 4000000000u);
-    p_setf(p, "TotK.Test.F", 1.25f);
-    p_setp(p, "TotK.Test.P", (void *)p);
-    int ok = p_geti(p, "TotK.Test.I", &i) && i == -12345 && p_getu(p, "TotK.Test.U", &u) && u == 4000000000u &&
-             p_getf(p, "TotK.Test.F", &f) && f == 1.25f && p_getp(p, "TotK.Test.P", &v) && v == (void *)p;
+    p_seti(p, "NX2navi.Test.I", -12345);
+    p_setu(p, "NX2navi.Test.U", 4000000000u);
+    p_setf(p, "NX2navi.Test.F", 1.25f);
+    p_setp(p, "NX2navi.Test.P", (void *)p);
+    int ok = p_geti(p, "NX2navi.Test.I", &i) && i == -12345 && p_getu(p, "NX2navi.Test.U", &u) && u == 4000000000u &&
+             p_getf(p, "NX2navi.Test.F", &f) && f == 1.25f && p_getp(p, "NX2navi.Test.P", &v) && v == (void *)p;
     if (N.destroy_params) N.destroy_params(p);
     if (!ok) rt_log("dlaa: NGX parameter layout check failed (i=%d u=%u f=%g p=%p): DLAA off", i, u, f, v);
     return ok;
@@ -265,8 +265,8 @@ void vk_dlaa_init(void) {
 
 int vk_dlaa_available(void) { return vk_dlaa_wanted() && N.available; }
 
-// ---------------------------------------------------------------- where DLAA runs in TotK's frame
-// Measured (TOTK_DUMP, frame 2100 at Lookout Landing, 2560x1440 scene): the G-buffer passes draw into five targets with
+// ---------------------------------------------------------------- where DLAA runs in NX2navi's frame
+// Measured (NX2NAVI_DUMP, frame 2100 at Lookout Landing, 2560x1440 scene): the G-buffer passes draw into five targets with
 // the scene depth (d32f at the scene size), one of them the R11G11B10F light target; lighting and the transparents
 // then draw into that light target alone, the last time with the scene depth attached; the first pass narrower than a
 // quarter of the scene starts the bloom chain, which reads it. After the bloom come the tonemap and post passes, then
@@ -275,7 +275,7 @@ int vk_dlaa_available(void) { return vk_dlaa_wanted() && N.available; }
 // depth arms the frame with that pair; the next pass at most a quarter as wide ends the scene (no jitter after it) and,
 // when the scene is as wide as the output, runs DLAA on the armed target first. Bloom, tonemap, post and HUD then all
 // work on the anti-aliased picture.
-// Upscaling (a scene smaller than the output: TOTK_DLSS quality/balanced/performance, or the game's own 5/6): measured
+// Upscaling (a scene smaller than the output: NX2NAVI_DLSS quality/balanced/performance, or the game's own 5/6): measured
 // at a 960x536 scene, 1920x1080 output, the bloom and its composite write back into the light target at the scene size,
 // then one full-screen draw (the FXAA shader below, which also scales) reads it into an output-sized R11G11B10F target
 // with no depth, and the HUD is drawn over that target at the output size. DLSS runs at the begin of that pass: it
@@ -382,7 +382,7 @@ static void free_size(struct Size *e) {
 
 // The entry for a scene and output size: its output (RGBA16F at the output size, written by DLSS, then blitted into
 // the target) and motion vectors (RG16F at the scene size, render pixels), both kept in GENERAL like every image of the
-// back end. TotK's dynamic resolution switches between a few sizes; each keeps its feature, the least recently used
+// back end. NX2navi's dynamic resolution switches between a few sizes; each keeps its feature, the least recently used
 // goes for a new one.
 static struct Size *size_for(VkCommandBuffer cb, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     struct Size *e = NULL, *lru = &D.sizes[0];
@@ -442,7 +442,7 @@ static NgxResourceVK res_image(VkImageView v, VkImage img, VkFormat f, uint32_t 
     return r;
 }
 
-// ---------------------------------------------------------------- timing (TOTK_DLAA_TIMES=1)
+// ---------------------------------------------------------------- timing (NX2NAVI_DLAA_TIMES=1)
 // GPU timestamps around the camera motion dispatch, the per-object motion pass and DLSS's evaluation, and the CPU
 // time of NGX's call and of draining the recorder before it, summed and logged every TIMES_SUMMARY frames:
 //   dlaa times: gpu camera motion a ms, object motion b ms, DLSS c ms (frames timed); cpu: recorder drain d ms, NGX
@@ -568,7 +568,7 @@ fail:
 }
 
 // The reprojection from this frame's clip space to last frame's, last * inverse(this), in double precision: the shader
-// took each pixel back to world space through a float inverse of the view-projection, and with TotK's world
+// took each pixel back to world space through a float inverse of the view-projection, and with NX2navi's world
 // coordinates in the thousands and its far plane the result was noise of a fraction of a pixel and more on distant
 // surfaces, which DLSS followed into a shimmer like heat haze (roofs and trees, most of all in the upscaling modes).
 // The shader is unchanged: its "this frame" block gets the identity and its "last frame" block this matrix, so it
@@ -685,7 +685,7 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
     vkCmdDispatch(cb, (w + 7) / 8, (h + 7) / 8, 1);
     full_barrier(cb);
     times_mark(cb, T_MV1);
-    vk_mvcheck_camera(cb, e->mv, w, h, jx, jy);   // TOTK_MV_CHECK (test)
+    vk_mvcheck_camera(cb, e->mv, w, h, jx, jy);   // NX2NAVI_MV_CHECK (test)
     // the characters' own motion over the camera's (vk_exec_draw.c, per-object motion)
     uint64_t c0 = T.on > 0 ? kern_now_ns() : 0;
     if (vk_mvobj_execute(ex, D.cam_addr, e->mv_view, zv, D.depth.format, w, h)) full_barrier(cb);
@@ -716,7 +716,7 @@ int vk_dlaa_prev_camera(VkDescriptorBufferInfo *out, float jitter[2]) {
 // "DLSS.Input.Bias.Current.Color.Mask"). It is made from the picture itself, at no cost on the CPU: the light target is
 // copied when the transparents start (the pass that arms DLAA, vk_dlaa_pass) and compared with what DLSS gets
 // (runtime/dlaa_mask_spv.h, tools/make_dlaa_mask.py): the share of a pixel's colour that changed, from MASK_THR on,
-// times MASK_GAIN. Off by default (TOTK_DLSS_REACTIVE=1 turns it on, TOTK_DLAA_MASKDEBUG=1 shows the mask instead of
+// times MASK_GAIN. Off by default (NX2NAVI_DLSS_REACTIVE=1 turns it on, NX2NAVI_DLAA_MASKDEBUG=1 shows the mask instead of
 // the picture): the pass that arms also draws the sky and blended fog layers over the solid scene, and the mask
 // covered the sky, sunlit trees and roofs and a wide fog region besides the particles (seen with MASKDEBUG at 19:45 in
 // the first save), where DLSS would give up its anti-aliasing. It needs the particle draws alone (drawn again into the
@@ -884,7 +884,7 @@ void vk_dlaa_viewport(VkExec *ex, VkViewport *v) {
 
 void vk_dlaa_draw(VkExec *ex) {
     if (!dl_active() || D.ended) return;
-    static int survey = -1;   // TOTK_DLAA_SURVEY=1 (test): what is drawn into the armed light target
+    static int survey = -1;   // NX2NAVI_DLAA_SURVEY=1 (test): what is drawn into the armed light target
     if (survey < 0) survey = rt_knob("DLAA_SURVEY", "0");
     static uint64_t dfn[16];   // scene draws writing depth, by depth test (reversed depth: GREATER/GEQUAL)
     if (survey && ex->depth.image && ex->depth.image == D.jdepth && ex->pipe.ds.dt && ex->pipe.ds.dw)
@@ -928,7 +928,7 @@ void vk_dlaa_draw(VkExec *ex) {
 // Quality, 24 in Balanced, 32 in Performance, 72 in Ultra Performance), and 16 at least, the length DLAA has used from the start.
 static void next_jitter(uint32_t w, uint32_t ow) {
     static int nj = -1;
-    if (nj < 0) nj = !rt_knob("DLAA_JITTER", "1");   // TOTK_DLAA_JITTER=0: no jitter (test)
+    if (nj < 0) nj = !rt_knob("DLAA_JITTER", "1");   // NX2NAVI_DLAA_JITTER=0: no jitter (test)
     double r = w ? (double)ow / w : 1.0;
     uint32_t phases = (uint32_t)ceil(8.0 * r * r - 1e-6);
     if (phases < 16) phases = 16;
@@ -938,23 +938,23 @@ static void next_jitter(uint32_t w, uint32_t ow) {
     D.jit_ok = !D.hold && !nj;
 }
 
-// The DLSS model (TOTK_DLSS_PRESET, live): default takes NVIDIA's model per mode (evaluate: K for DLAA, Quality and
+// The DLSS model (NX2NAVI_DLSS_PRESET, live): default takes NVIDIA's model per mode (evaluate: K for DLAA, Quality and
 // Balanced, M for Performance, L for Ultra Performance), 0 here. A letter a..m takes that model in every mode: k pins
 // K, j is the other transformer model, which NVIDIA describes as slightly less ghosting at the cost of extra flicker, e
 // the older CNN model, cheaper on slower RTX cards. The value is an NVSDK_NGX_DLSS_Hint_Render_Preset (1 A ... 13 M),
 // read when a feature is created; a change recreates the features (preset_check).
 static int preset_value(void) {
-    const char *v = cfg_get("TOTK_DLSS_PRESET");
+    const char *v = cfg_get("NX2NAVI_DLSS_PRESET");
     int c = v && v[0] && !v[1] ? v[0] | 0x20 : 0;
     return c >= 'a' && c <= 'm' ? c - 'a' + 1 : 0;
 }
 
-// How strongly DLSS favours the current frame on characters and where they just were (TOTK_DLSS_CHAR_MASK, percent,
+// How strongly DLSS favours the current frame on characters and where they just were (NX2NAVI_DLSS_CHAR_MASK, percent,
 // live; 0 off). Where a character's vectors are the camera's only (dlaa_objmv = 0, or a draw the per-object pass
 // skips), one that moves on its own drags a faint copy of itself through DLSS's history; the bias mask makes DLSS take
 // less of the history there, at the cost of some of its anti-aliasing on those pixels.
 static float char_bias(void) {
-    const char *v = cfg_get("TOTK_DLSS_CHAR_MASK");
+    const char *v = cfg_get("NX2NAVI_DLSS_CHAR_MASK");
     long n = v && *v ? strtol(v, NULL, 10) : 65;
     return n <= 0 ? 0.0f : n >= 100 ? 1.0f : (float)n / 100.0f;
 }
@@ -987,7 +987,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
                                          z->base_layer, 1, 0);
     float jx = D.jit_used ? D.ux : 0.0f, jy = D.jit_used ? D.uy : 0.0f;
     static int no_mv = -1;
-    if (no_mv < 0) no_mv = !rt_knob("DLAA_MV", "1");   // TOTK_DLAA_MV=0: zero motion (test)
+    if (no_mv < 0) no_mv = !rt_knob("DLAA_MV", "1");   // NX2NAVI_DLAA_MV=0: zero motion (test)
     int masked = 0;
     if (no_mv || !mv_pass(ex, e, zv, jx, jy, char_bias(), &masked)) {
         VkClearColorValue zero = {{0, 0, 0, 0}};
@@ -1046,7 +1046,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     p_setf(p, "Jitter.Offset.Y", jy);
     p_setf(p, "Sharpness", 0.0f);
     p_seti(p, "Reset", D.reset);
-    // One bias mask: the reactive one (TOTK_DLSS_REACTIVE, a test) where it ran, else the characters' (mv_pass), else
+    // One bias mask: the reactive one (NX2NAVI_DLSS_REACTIVE, a test) where it ran, else the characters' (mv_pass), else
     // none. The parameter object is reused, so it is cleared explicitly.
     NgxResourceVK rk = mk ? res_image(mk->mask_view, mk->mask, VK_FORMAT_R8_UNORM, w, h, VK_IMAGE_ASPECT_COLOR_BIT, 0)
                           : res_image(e->mask_view, e->mask, VK_FORMAT_R8_UNORM, w, h, VK_IMAGE_ASPECT_COLOR_BIT, 0);
@@ -1073,14 +1073,14 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     D.reset = 0;
     D.last = e, e->used = D.evals + 1;
     full_barrier(cb);
-    vk_mvcheck_output(cb, e->out, ow, oh);   // TOTK_MV_CHECK (test)
+    vk_mvcheck_output(cb, e->out, ow, oh);   // NX2NAVI_MV_CHECK (test)
     // the result into the scene target (DLAA: the bloom, the post passes and the HUD read it and draw over it) or into
     // the scaling pass's target (the HUD draws over it)
     VkImageBlit b = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                      .srcOffsets = {{0, 0, 0}, {(int32_t)ow, (int32_t)oh, 1}},
                      .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, dst->level, dst->base_layer, 1},
                      .dstOffsets = {{0, 0, 0}, {(int32_t)ow, (int32_t)oh, 1}}};
-    // TOTK_DLAA_MVDEBUG=1 (test): the motion vectors in place of the picture, x in red and y in green, render pixels
+    // NX2NAVI_DLAA_MVDEBUG=1 (test): the motion vectors in place of the picture, x in red and y in green, render pixels
     // as scene light (the post passes still run over them)
     static int mvdebug = -1;
     if (mvdebug < 0) mvdebug = rt_knob("DLAA_MVDEBUG", "0");
@@ -1156,12 +1156,12 @@ void vk_dlaa_pass(VkExec *ex) {
     }
 }
 
-// TOTK_DLSS, read at each present (the menu switches it live): the scene size of the mode (resolution.c) and the
+// NX2NAVI_DLSS, read at each present (the menu switches it live): the scene size of the mode (resolution.c) and the
 // texture bias that goes with it while DLSS runs.
 static void dlss_mode(void) {
     static char mode[32];
     static int bias_on = -1;
-    const char *m = cfg_value("TOTK_DLSS");
+    const char *m = cfg_value("NX2NAVI_DLSS");
     if (strcmp(m, mode)) {
         snprintf(mode, sizeof mode, "%s", m);
         res_dlss_mode(m);
@@ -1190,7 +1190,7 @@ void vk_dlaa_frame(void) {
     vk_dlaa_swap_img = NULL, vk_dlaa_swap_view = VK_NULL_HANDLE;
     dlss_mode();
     preset_check();
-    int on = N.available && cfg_bool("TOTK_DLAA");
+    int on = N.available && cfg_bool("NX2NAVI_DLAA");
     if (on != D.on) {
         rt_log("dlaa: %s", on ? "on" : "off");
         D.on = on;
@@ -1208,8 +1208,8 @@ void vk_dlaa_frame(void) {
     D.cam_addr = 0;
 }
 
-// ---------------------------------------------------------------- the game's FXAA (TOTK_FXAA, live)
-// TotK's FXAA is two full-screen passes after the bloom, just before the HUD: one copies the scene target into a
+// ---------------------------------------------------------------- the game's FXAA (NX2NAVI_FXAA, live)
+// NX2navi's FXAA is two full-screen passes after the bloom, just before the HUD: one copies the scene target into a
 // scratch target, the other draws the anti-aliased result back over the scene (found by diffing frame dumps with the
 // game's own switch, ModelSceneExtensionParam EnableFXAA, on and off). With fxaa = 0 the draws of that second pass's
 // fragment shader are skipped, so the scene reaches the HUD as it was. Shaders are known by the FNV-1a hash of their
@@ -1250,7 +1250,7 @@ int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs) {
     static int fx_found, fx_reported;
     uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
     if (f != frame_read) {   // once a frame: the menu switches it live
-        frame_read = f, fxaa = cfg_bool("TOTK_FXAA");
+        frame_read = f, fxaa = cfg_bool("NX2NAVI_FXAA");
         if (!fxaa && !fx_found && !fx_reported && ++fx_off_frames == 3600) {
             fx_reported = 1;
             rt_log("dlaa: fxaa = 0 found no draw of the game's FXAA in %llu frames (its fragment shader is not in "

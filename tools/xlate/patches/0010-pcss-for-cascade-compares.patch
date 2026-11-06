@@ -17,9 +17,9 @@
              return new OperationResult(swizzledResultType, result);
          }
  
-+        // TOTK: percentage-closer soft shadows for the sun. The deferred lighting shaders take the shadow as four
++        // NX2NAVI: percentage-closer soft shadows for the sun. The deferred lighting shaders take the shadow as four
 +        // explicit-LOD compares on a 2D array (the cascades) around the receiver; each of those becomes a PCSS lookup
-+        // when the support buffer's pcss.x is above 0 (runtime/vk_exec_draw.c support_fill, TOTK_PCSS): a blocker
++        // when the support buffer's pcss.x is above 0 (runtime/vk_exec_draw.c support_fill, NX2NAVI_PCSS): a blocker
 +        // search reads the raw depths at eight points within pcss.w (UV), the average depth of those nearer the light
 +        // than the receiver gives the penumbra width (receiver - blocker) * pcss.x, clamped to pcss.y..pcss.z (UV), and
 +        // eight compares on a disc of that radius average to the result. With pcss.x at 0 the original single compare

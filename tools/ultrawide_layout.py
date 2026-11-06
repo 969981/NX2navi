@@ -1,6 +1,6 @@
 # Adapted from MacNativeGames games/totk/scripts/ultrawide_layout.py @ 933b6a0 (MIT, Copyright (c) 2026
 # MacNativeGames contributors). Used by tools/make_romfs_patches.py --aspect.
-"""The game's UI layouts for a canvas of another shape than 16:9 (output_res = 3440x1440 or 1280x800 in totk.ini),
+"""The game's UI layouts for a canvas of another shape than 16:9 (output_res = 3440x1440 or 1280x800 in nx2navi.ini),
 edited in place in the decompressed UI/LayoutArchive/Common.Product.*.blarc (tools/make_romfs_patches.py --aspect).
 
 The game lays its UI out on a 1920x1080 grid and maps that grid onto the canvas, so on a 21:9 canvas every layout comes

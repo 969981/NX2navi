@@ -1,4 +1,4 @@
-// Direct mouse input for TotK 1.4.3. The camera controller's input update (main+0x874c1c) turns HID stick floats
+// Direct mouse input for NX2navi 1.4.3. The camera controller's input update (main+0x874c1c) turns HID stick floats
 // into a radial dead zone, clamps the radius to one and applies StickExponent. The mouse enters after all three,
 // at main+0x874cb4, before the game's X/Y inversion and input-activity flags. It never becomes a HID stick value.
 // Free orbit removes that sample again before the camera's additional vertical square/velocity filters and adds
@@ -24,7 +24,7 @@
 
 static int direct_mode(void) {
     // cfg_value: unset is the settings table's default (direct), as the menu shows it
-    return !strcmp(cfg_value("TOTK_MOUSE_MODE"), "direct") && rt_patch_enabled(rt_patch_set("mouse_direct"));
+    return !strcmp(cfg_value("NX2NAVI_MOUSE_MODE"), "direct") && rt_patch_enabled(rt_patch_set("mouse_direct"));
 }
 
 static uint64_t last_update;
@@ -165,7 +165,7 @@ static void camera_input(Cpu *c) {
     if (direct_mode()) {
         int32_t dx, dy;
         input_direct_mouse_sample(!input_direct_mouse_selector_active() && (accept || hand_active(plat_now_ns())), &dx, &dy);
-        float sensitivity = (float)cfg_double("TOTK_MOUSE_SENS");
+        float sensitivity = (float)cfg_double("NX2NAVI_MOUSE_SENS");
         sensitivity = fminf(10, fmaxf(0, sensitivity));
         // The game multiplies camera input by its 30 Hz frame ratio later. Divide by that exact ratio, rather
         // than wall-clock time: an equal distance of mouse motion then gives equal input at every frame rate.

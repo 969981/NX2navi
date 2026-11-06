@@ -237,8 +237,8 @@ static const char *script_path;
 static uint64_t test_tick;
 static int64_t test_world=-1;
 const char *cfg_get(const char *key) {
-    if (!strcmp(key,"TOTK_INPUT_SCRIPT")) return script_path;
-    if (!strcmp(key,"TOTK_INPUT")) return "none";
+    if (!strcmp(key,"NX2NAVI_INPUT_SCRIPT")) return script_path;
+    if (!strcmp(key,"NX2NAVI_INPUT")) return "none";
     return NULL;
 }
 unsigned cfg_version(void) { return 0; }
@@ -288,7 +288,7 @@ def main():
     ap.add_argument('--cc', required=True)
     ap.add_argument('--deps', type=Path, help='dependency include directory (SDL3/Vulkan), to also check input scripts')
     args = ap.parse_args()
-    with tempfile.TemporaryDirectory(prefix='totk-mouse-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='nx2navi-mouse-') as tmp:
         folder = Path(tmp)
         (folder / 'patches.h').write_text('#define RT_PATCH_PAGE 0x7003adf000ull\n')
         source = folder / 'check.c'

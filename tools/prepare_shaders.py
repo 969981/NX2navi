@@ -7,20 +7,20 @@ the translator answers it was translated for. This tool reads the shaders from t
 (tools/shader_census.py inventory), keeps the list's variants whose shader is in this game version, adds each shader's
 default variant (every texture slot a 2D texture, float vertex inputs and colour outputs, as MacNativeGames' seed
 translates every shader for its default bind state: prepare_shader_seed.py all_default), and writes them next to the
-build's totk.exe in the record layouts of runtime/gfx_shader.c ("answers met in play"):
+build's nx2navi.exe in the record layouts of runtime/gfx_shader.c ("answers met in play"):
 
-    seed-programs.bin  "TOTKSPRG": stage, length, c1 length, runtime code hash, control section, code, c1
-    seed-answers.bin   "TOTKSANS": stage, code hash, input id (zero: the runtime computes it), answers, priority
+    seed-programs.bin  "NX2NSPRG": stage, length, c1 length, runtime code hash, control section, code, c1
+    seed-answers.bin   "NX2NSANS": stage, code hash, input id (zero: the runtime computes it), answers, priority
 
 Priority (the pad byte): 0 shaders the list's warm rows flag as title/menu (t), 1 other warm rows (S, C, R), 2 the
-rest; a default variant takes its shader's priority. Then it runs `totk.exe --prepare-shaders`, which translates every record into the build's shader cache, writes
+rest; a default variant takes its shader's priority. Then it runs `nx2navi.exe --prepare-shaders`, which translates every record into the build's shader cache, writes
 shader-prepared.bin (one record per variant, in priority order) and builds every variant's stage library or compute
 pipeline once, so the GPU driver's own disk cache holds them (vk_pipeline.c "stage library prebuild"). The seed files
 can be deleted afterwards.
 
 A driver whose shader compiler crashes on a variant crashes on it in every run (NVIDIA 615.78.08 on an RTX 5080, issue
 #30). The translations and shader-prepared.bin are written by then, and the journal the run leaves names the variants
-the driver was building (vk_pipeline.c skip_init), so only the driver step runs again (`totk.exe --warm-shaders`), up to
+the driver was building (vk_pipeline.c skip_init), so only the driver step runs again (`nx2navi.exe --warm-shaders`), up to
 RETRIES times, and skips them.
 
 Game-derived output stays in the build directory (ignored). The list is read at preparation time from tools/data/shader_list.tsv when that file exists (the installer archive
@@ -78,7 +78,7 @@ def read_list(path):
 
 def pipeline_variants(key):
     """The vertex and fragment variant names of an R/B row's pipeline key. Since MacNativeGames f024ef04 (2026-10-28) the
-    TotK list keeps keys packed, "<vs variant>:<fs variant>:<the rest in hex>"; older revisions and contribution files
+    NX2navi list keeps keys packed, "<vs variant>:<fs variant>:<the rest in hex>"; older revisions and contribution files
     hold the whole key in hex, "<vs variant>\\0<fs variant>\\0" + a Metal descriptor (docs/shader-list.md there)."""
     if ':' in key:
         return key.split(':', 2)[:2]
@@ -136,7 +136,7 @@ def code_hash(stage, control, code, length, c1):
 
 
 def driver_crashed(out):
-    """totk died while the graphics driver built variants: the journal it left names at least one."""
+    """nx2navi died while the graphics driver built variants: the journal it left names at least one."""
     p = out / JOURNAL
     data = p.read_bytes() if p.is_file() else b''
     return any(any(data[i:i + 32]) for i in range(0, len(data), 64))
@@ -144,7 +144,7 @@ def driver_crashed(out):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('build', type=Path, help='build directory holding totk.exe (build\\v121)')
+    ap.add_argument('build', type=Path, help='build directory holding nx2navi.exe (build\\v121)')
     ap.add_argument('--version', default='v121', help='build/extracted/<version>')
     ap.add_argument('--romfs', type=Path, help='RomFS directory (default build/extracted/<version>/romfs)')
     ap.add_argument('--exefs', type=Path, help='ExeFS directory (default build/extracted/<version>/exefs)')
@@ -192,11 +192,11 @@ def main():
     recs.sort(key=lambda r: r[0])   # stable: list order within a priority
     out = a.build.resolve()
     with open(out / 'seed-programs.bin', 'wb') as f:
-        f.write(b'TOTKSPRG' + struct.pack('<II', 1, 0))
+        f.write(b'NX2NSPRG' + struct.pack('<II', 1, 0))
         for _, body in progs.values():
             f.write(body)
     with open(out / 'seed-answers.bin', 'wb') as f:
-        f.write(b'TOTKSANS' + struct.pack('<II', 1, ANS_REC))
+        f.write(b'NX2NSANS' + struct.pack('<II', 1, ANS_REC))
         for _, rec in recs:
             f.write(rec)
     by = [sum(1 for p, _ in recs if p == i) for i in range(3)]
@@ -205,15 +205,15 @@ def main():
           f'seed written in {time.monotonic() - t0:.1f} s', flush=True)
     if a.no_run:
         return 0
-    exe = out / ('totk.exe' if os.name == 'nt' else 'totk')
+    exe = out / ('nx2navi.exe' if os.name == 'nt' else 'nx2navi')
     r = subprocess.run([str(exe), '--prepare-shaders'], cwd=str(out))
     for _ in range(RETRIES):
         if not r.returncode or not driver_crashed(out):
             break
         print(f'prepare_shaders: the graphics driver crashed while building shaders (rc={r.returncode}); building them '
-              'again without the variants it was building (totk.exe --warm-shaders)', flush=True)
+              'again without the variants it was building (nx2navi.exe --warm-shaders)', flush=True)
         r = subprocess.run([str(exe), '--warm-shaders'], cwd=str(out))
-    print(f'totk.exe --prepare-shaders: rc={r.returncode}; total {time.monotonic() - t0:.1f} s')
+    print(f'nx2navi.exe --prepare-shaders: rc={r.returncode}; total {time.monotonic() - t0:.1f} s')
     return r.returncode
 
 

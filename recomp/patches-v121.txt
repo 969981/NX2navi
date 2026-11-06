@@ -1,15 +1,15 @@
-# Code patches for TotK 1.2.1 main (recomp/patches.py). Ported from MacNativeGames games/totk/runtime/game_patches.c
+# Code patches for NX2navi 1.2.1 main (recomp/patches.py). Ported from MacNativeGames games/totk/runtime/game_patches.c
 # (MIT, Copyright (c) 2026 MacNativeGames contributors) at upstream ebe621d; 1.2.1 sites from its game_version.h
 # (2db612b), each original word checked against the 1.2.1 main. The patch page holds two floats the runtime writes at
 # every present (frame_rate.c): +0 the 30 Hz ratio (seconds * 30), +4 the frame step in seconds.
 
-set fps60    TOTK_FPS60          1
-set realtime TOTK_REALTIME       1
-set cloth    TOTK_CLOTH_REALTIME 1
-set bounce   TOTK_HIGHFPS_FIX    1
-set output   TOTK_PATCH_OUTPUT   0
-set scene    TOTK_PATCH_SCENE    0
-set shadow   TOTK_PATCH_SHADOW   0
+set fps60    NX2NAVI_FPS60          1
+set realtime NX2NAVI_REALTIME       1
+set cloth    NX2NAVI_CLOTH_REALTIME 1
+set bounce   NX2NAVI_HIGHFPS_FIX    1
+set output   NX2NAVI_PATCH_OUTPUT   0
+set scene    NX2NAVI_PATCH_SCENE    0
+set shadow   NX2NAVI_PATCH_SHADOW   0
 
 # 60 fps: the adaptive present-interval controller (main+0x8f26c8, 1.0.0 0x8f6bec) gets the minimum interval 1.
 site fps60 main 8f273c 6b08015f 7100055f   # clamp: cmp w10, #1 (was cmp w10, w8 = minimum)
@@ -60,7 +60,7 @@ site bounce main bda798 bd402900 bd402900 bd403901 1e210800   # ldr s0, [x8, #0x
 # 2x as fast at 60 fps and 4x at 120 as at the shipping 30 fps (issue #44). Each site multiplies the step by that ratio,
 # so the speed is the shipping one at any frame rate. x9 and s16 are free: the next read of x9 follows a write, the
 # function does not touch s16, and x20 keeps the update's frame object for the whole function.
-set cursor   TOTK_HIGHFPS_FIX    1
+set cursor   NX2NAVI_HIGHFPS_FIX    1
 site cursor main ec3d9c bd400361 f94002e9 bd400930 1e300800 bd400361   # map pan speed s0 *= [[x23] + 8], then ldr s1, [x27]
 site cursor main 1d48d64 1e2a198c 1e2a198c bd400a90 1e30098c   # fdiv s12, s12, s10, then s12 *= [x20 + 8]: vertical Ultrahand aim
 site cursor main 1d484e4 1e200923 1e200923 bd400a90 1e300863   # fmul s3, s9, s0, then s3 *= [x20 + 8]: vertical gyro aim (Recall)
@@ -86,7 +86,7 @@ site scene main cc3f74 5e21d921 bd0cc660    # scvtf s1, s9 -> str s0, [x19, #0xc
 # sites as patches-v143.txt, with the same original words: two camera sites (update and setup) load the camera's copy of
 # DefaultAspect 1.777778, two viewport routines divide width by height. The replacement loads the ratio from the page
 # instead (Hor+). x10 is kept on the stack, so no register liveness is assumed.
-set aspect   TOTK_ASPECT_PATCH   0
+set aspect   NX2NAVI_ASPECT_PATCH   0
 site aspect main cb4b10 bd414260 f81f0fea @page:x10 bd403940 f84107ea   # ldr s0, [x19, #0x140] (camera update)
 site aspect main 12521cc bd414260 f81f0fea @page:x10 bd403940 f84107ea  # ldr s0, [x19, #0x140] (camera setup)
 site aspect main 19b36f0 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s0, s0, s1 (viewport)
@@ -95,16 +95,16 @@ site aspect main 1ecdf68 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s
 # Texture pool offsets past 2 GiB (MacNativeGames ca311e2d). The texture loader keeps a texture's place in its pool as a
 # 32-bit offset (main+0xad4294: sub x25, x9, x10, stored as the word w25) and widens it as a signed number for
 # nvnTextureBuilderSetStorage's offset and for SetPackagedTextureData's source (the pool's CPU address + offset). The
-# shipped heap table keeps every pool far below 2 GiB; a texture pack's heap table with TOTK_APP_POOL raised can make
+# shipped heap table keeps every pool far below 2 GiB; a texture pack's heap table with NX2NAVI_APP_POOL raised can make
 # one larger (MacNativeGames saw a 3.58 GiB pool), and every texture past 2 GiB then got storage 4 GiB below its pool.
 # The offset is widened unsigned instead, the same value below 2 GiB, right up to 4 GiB. 1.4.3 needs no patch: its
 # loaders (main+0x583c34, main+0x27ed214) keep the offset in 64 bits.
-set pooloff  TOTK_POOL_OFFSET_PATCH 1
+set pooloff  NX2NAVI_POOL_OFFSET_PATCH 1
 site pooloff main ad43f0 93407f22 2a1903e2   # sxtw x2, w25 -> mov w2, w25 (SetStorage offset)
 site pooloff main ad440c 8b39c101 8b394101   # add x1, x8, w25, sxtw -> add x1, x8, w25, uxtw (packaged data source)
 
 # Spin waits, from tools/spin_waits.py --exefs build/extracted/v121/exefs --patches recomp/patches-v121.txt: loops that only
-# another thread can end; their back-edges pass rt_spin_gate (runtime/kernel.c), TOTK_SPIN=0 keeps the core.
+# another thread can end; their back-edges pass rt_spin_gate (runtime/kernel.c), NX2NAVI_SPIN=0 keeps the core.
 spin main ac600 ac620 ac630   # 13 instructions; loads
 spin main ac680 ac6a8 ac6b8   # 15 instructions; loads
 spin main ac6f0 ac718 ac728   # 15 instructions; loads

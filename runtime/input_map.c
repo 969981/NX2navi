@@ -1,4 +1,4 @@
-// Binding tables (keyboard/mouse and gamepad), their totk.ini overrides, the pure mapping functions and the Buttons
+// Binding tables (keyboard/mouse and gamepad), their nx2navi.ini overrides, the pure mapping functions and the Buttons
 // tab's edits (input_map.h). No Win32 or SDL here.
 #include <ctype.h>
 #include <math.h>
@@ -168,7 +168,7 @@ void input_map_configure(void) {
     input_map_reset();
     for (int a = 0; a < ACTION_COUNT; a++) {
         char var[32];
-        snprintf(var, sizeof var, "TOTK_BIND_%s", action_names[a]);
+        snprintf(var, sizeof var, "NX2NAVI_BIND_%s", action_names[a]);
         const char *v = cfg_get(var);
         if (v && *v && input_map_bind(action_names[a], v)) rt_log("input: %s = %s", var + 5, v);
     }
@@ -355,8 +355,8 @@ void input_pad_stick(int32_t x, int32_t y, float dead, int32_t out[2]) {
 }
 
 float input_pad_deadzone(int stick) {
-    const char *own = stick ? "TOTK_RSTICK_DEADZONE" : "TOTK_LSTICK_DEADZONE", *set = cfg_get(own);
-    double v = cfg_double(set && *set ? own : "TOTK_STICK_DEADZONE");
+    const char *own = stick ? "NX2NAVI_RSTICK_DEADZONE" : "NX2NAVI_LSTICK_DEADZONE", *set = cfg_get(own);
+    double v = cfg_double(set && *set ? own : "NX2NAVI_STICK_DEADZONE");
     return (float)(v < 0 ? 0 : v > 50 ? 50 : v) / 100.f;
 }
 

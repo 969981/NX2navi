@@ -1,7 +1,7 @@
 // Switch 2 (NVN2) shader programs are SM86 (Ampere) code; the Ryujinx translator decodes Maxwell (SM5x) only. This file
 // rewrites each SM86 instruction as one or more Maxwell instructions with the same meaning, so Ryujinx's Maxwell decoder,
 // IR and SPIR-V backend run unchanged. Instructions this file does not know make the whole program fail with the opcode
-// and the reason, so coverage grows by census (python nvn2_shaders.py over a TOTK_SHADER_DUMP directory).
+// and the reason, so coverage grows by census (python nvn2_shaders.py over a NX2NAVI_SHADER_DUMP directory).
 //
 // Encoding facts: SM70+ instruction fields as in Mesa NAK's sm70_encode.rs (MIT); the Maxwell side is Ryujinx's
 // Decoders/InstTable.cs and InstDecoders.cs. Behaviour where SM86 and the translator's Maxwell model differ (MUFU.SIN/COS

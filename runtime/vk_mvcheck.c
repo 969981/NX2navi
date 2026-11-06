@@ -1,4 +1,4 @@
-// TOTK_MV_CHECK=<frames> (test): measures how well DLSS's motion vectors explain the picture, without screenshots or
+// NX2NAVI_MV_CHECK=<frames> (test): measures how well DLSS's motion vectors explain the picture, without screenshots or
 // judging by eye. Every <frames> DLAA frames, vk_dlaa.c mv_pass copies to host memory the scene light target of that
 // frame and of the frame before (before DLSS, so jittered), and the motion image twice: after the camera pass (camera
 // only) and after the per-object pass (what DLSS gets). Once the GPU is done, the completion thread compares them:
@@ -61,7 +61,7 @@ static struct {
 
 static int on(void) {
     if (K.period < 0) {
-        const char *v = cfg_get("TOTK_MV_CHECK");
+        const char *v = cfg_get("NX2NAVI_MV_CHECK");
         K.period = v && *v ? atoi(v) : 0;
         if (K.period < 0) K.period = 0;
         if (K.period && K.period < 4) K.period = 4;

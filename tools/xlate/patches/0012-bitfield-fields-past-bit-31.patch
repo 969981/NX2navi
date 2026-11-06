@@ -4,9 +4,9 @@
  
              Operand size = context.BitfieldExtractU32(srcB, Const(8), Const(8));
  
-+            // TOTK: Maxwell's BFE (as PTX bfe) cuts a field that runs past bit 31 there, and a field that starts past it
++            // NX2NAVI: Maxwell's BFE (as PTX bfe) cuts a field that runs past bit 31 there, and a field that starts past it
 +            // gives 0, or bit 31 repeated when signed and the size is not 0. SPIR-V leaves an offset or offset + count over
-+            // 32 undefined, and AMD's bitfield instructions take offset and width modulo 32. TOTK's Depths terrain vertex
++            // 32 undefined, and AMD's bitfield instructions take offset and width modulo 32. NX2NAVI's Depths terrain vertex
 +            // shaders take position and size from a register (BFE.R), so they are clamped into the defined range here;
 +            // constant fields inside the word are emitted as before.
 +            bool constantInRange = srcB.Type == OperandType.Constant && (srcB.Value & 0xff) + ((srcB.Value >> 8) & 0xff) <= 32;
@@ -36,7 +36,7 @@
 +            // TODO: CC, X.
 +        }
 +
-+        // TOTK: position and size of a bitfield cut to the 32-bit word: the size shrinks to what is left of the word
++        // NX2NAVI: position and size of a bitfield cut to the 32-bit word: the size shrinks to what is left of the word
 +        // after the position (0 for a position of 32 or more) and the position stays at most 31, so offset and
 +        // offset + count stay inside the range SPIR-V defines.
 +        private static void ClampBitfield(EmitterContext context, ref Operand position, ref Operand size)
@@ -52,7 +52,7 @@
  
              Operand size = context.BitfieldExtractU32(srcB, Const(8), Const(8));
  
-+            // TOTK: as in EmitBfe, a field past bit 31 is cut there; one that starts past it inserts nothing (size 0
++            // NX2NAVI: as in EmitBfe, a field past bit 31 is cut there; one that starts past it inserts nothing (size 0
 +            // after the clamp), so C comes back unchanged, as on Maxwell.
 +            if (!(srcB.Type == OperandType.Constant && (srcB.Value & 0xff) + ((srcB.Value >> 8) & 0xff) <= 32))
 +            {
