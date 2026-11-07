@@ -1,6 +1,6 @@
 // Player mods (mods.c): one folder per mod under mods/ next to nx2navi.exe (NX2NAVI_MODS_DIR), unpacked as emulators take
 // them: <mod>/romfs, <mod>/exefs and <mod>/cheats, the Atmosphere layout (atmosphere/contents/<title id>/romfs,
-// atmosphere/exefs_patches/<name>/*.ips) or TKMM's merged output (romfs or romfslite, exefs, cheats). ExeFS patch
+// atmosphere/exefs_patches/<name>/*.ips) or a mod manager's merged output (romfs or romfslite, exefs, cheats). ExeFS patch
 // files (.ips, .pchtxt) for the game's main are patch sets the setup builds into the game (tools/exefs_patches.py),
 // switched with their mod (mods_exefs_switch). The list is scanned once at start (romfs.c overlay_init);
 // its order and switches live in nx2navi.ini [mods] (NX2NAVI_MODS_ORDER: names top first, separated by '|';
