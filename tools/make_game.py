@@ -20,8 +20,14 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
 The exefs and romfs steps depend only on the game files; lift and compile depend on this kit's code too. A newer kit
 therefore lifts and compiles again but keeps the unpacked game files, and --rebuild needs no game files at all. The
 compile step keeps every object with the dependency list clang wrote for it (build-cache/obj/objects.json) and
-compiles a file again only when it, a header it includes, the flags or the compiler changed. The new ocarina.exe
-replaces the old one only once it links, so a failed build leaves the last good one in place.
+compiles a file again only when it, a header it includes, the flags or the compiler changed; the kit's own folder
+is not part of that key, so a kit in another folder (the launcher keeps each version in its own) reuses the objects.
+A kit with lib/libnx2navirt.a built by --make-runtime-lib for the same runtime/ and the same compiler links the
+runtime from it and compiles only the runtime files that include headers written per install. The new ocarina.exe
+replaces the old one only once it links (with lld when the toolchain has it), so a failed build leaves the last good
+one in place.
+
+    python tools/make_game.py --make-runtime-lib <kit>/lib --msys <ucrt64>   # the release's prebuilt runtime
 
 Nothing is written outside --out. The game folder then holds only what this PC built from the player's files: never
 share it. Needs Python 3.10+ with numpy, lz4, zstandard and zbic (pip), and MSYS2 UCRT64's clang and libraries
@@ -77,6 +83,13 @@ LINK_LIBS = ['-lvulkan-1', '-lSDL3', '-lopus', '-lvpx', '-l:libdav1d.a', '-lzstd
              '-limm32', '-luuid', '-lole32', '-luser32', '-lshell32', '-lgdi32', '-ladvapi32', '-lwinmm']
 SYSTEM_DLLS_SKIP = {'vulkan-1.dll'}   # the graphics driver's loader, never a copy
 EXE_NAME = 'ocarina.exe'
+# Headers this build writes per install (gen.py, romfs_index.py): a runtime source that includes one, directly or
+# through a runtime header, is compiled on the player's PC; every other runtime source can come prebuilt.
+GENERATED_HEADERS = ('layout.h', 'patches.h', 'romfs_config.h')
+RUNTIME_LIB = 'libnx2navirt.a'
+RUNTIME_PATTERNS = ('*.c', '*.cpp', 'platform/*.c', 'ui/*.cpp', 'third_party/imgui/*.cpp',
+                    'third_party/imgui/backends/*.cpp')
+INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]+"([^"]+)"', re.M)
 
 # Runs a script the way `python script.py` does, with the script's folder first on sys.path. The launcher's
 # embeddable Python leaves the script folder off sys.path (its ._pth file), so every script this build starts goes
@@ -487,16 +500,32 @@ def parse_deps(text):
 
 
 class ObjectCache:
-    """Which objects are current: per object the key of its command and source, and the sha256 of every file its
-    dependency list names (build-cache/obj/objects.json)."""
+    """Which objects are current: per object the key of its command and source, and the sha256 (with size and
+    modification time, to skip hashing an untouched file) of every file its dependency list names
+    (build-cache/obj/objects.json). Paths under a root are kept relative to it ({'<kit>': KIT}), so the same files
+    in a kit at another place still count as the same."""
 
-    def __init__(self, path):
+    def __init__(self, path, roots=None):
         self.path = path
+        self.roots = {k: os.path.normcase(os.path.abspath(v)) for k, v in (roots or {}).items()}
         try:
             self.entries = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
         except (OSError, ValueError):
             self.entries = {}
         self._sha = {}
+
+    def norm(self, p):
+        a = os.path.normcase(os.path.abspath(p))
+        for name, root in self.roots.items():
+            if a == root or a.startswith(root + os.sep):
+                return name + a[len(root):].replace(os.sep, '/')
+        return a
+
+    def real(self, p):
+        for name, root in self.roots.items():
+            if p.startswith(name):
+                return root + p[len(name):].replace('/', os.sep)
+        return p
 
     def file_sha(self, p):
         p = os.path.normcase(os.path.abspath(p))
@@ -507,18 +536,37 @@ class ObjectCache:
                 self._sha[p] = None
         return self._sha[p]
 
+    def _same(self, p, rec):
+        path = self.real(p)
+        if isinstance(rec, str):   # a cache without sizes and times
+            return self.file_sha(path) == rec
+        digest, size, mtime = rec
+        try:
+            st = os.stat(path)
+        except OSError:
+            return False
+        if st.st_size == size and st.st_mtime_ns == mtime:
+            return True
+        return st.st_size == size and self.file_sha(path) == digest
+
     def current(self, obj, key):
         e = self.entries.get(obj.name)
         return (e is not None and e.get('key') == key and obj.is_file()
-                and all(self.file_sha(p) == h for p, h in e.get('deps', {}).items()))
+                and all(self._same(p, rec) for p, rec in e.get('deps', {}).items()))
 
     def record(self, obj, key, dep_file, src):
         try:
             deps = parse_deps(Path(dep_file).read_text(encoding='utf-8', errors='replace'))
         except OSError:
             deps = []
-        deps = deps or [str(src)]
-        self.entries[obj.name] = {'key': key, 'deps': {p: self.file_sha(p) for p in deps}}
+        out = {}
+        for p in deps or [str(src)]:
+            try:
+                st = os.stat(p)
+                out[self.norm(p)] = [self.file_sha(p), st.st_size, st.st_mtime_ns]
+            except OSError:
+                out[self.norm(p)] = [None, -1, -1]
+        self.entries[obj.name] = {'key': key, 'deps': out}
 
     def forget(self, obj):
         self.entries.pop(obj.name, None)
@@ -538,11 +586,15 @@ def compiler_id(clang, env):
 def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt=''):
     """Compile each (source, object) whose object is not current in cache. cmd_for(src, dst) -> argv without the
     dependency-file options; salt identifies the compiler. Returns (compiled, reused, failures) with failures as
-    (src, stderr tail)."""
+    (src, stderr tail). The cache's roots stand for their paths in the flags too."""
     todo, keys = [], {}
     for src, dst in srcs:
         cmd = cmd_for(src, dst)
-        flags = [c for c in cmd if c not in (str(src), str(dst))]
+        flags = [c for c in cmd[1:] if c not in (str(src), str(dst))]
+        for name, root in cache.roots.items():
+            flags = [name + os.path.normcase(f)[len(root):].replace(os.sep, '/') if os.path.normcase(f).startswith(root)
+                     else f for f in flags]
+        flags = [os.path.basename(cmd[0])] + flags
         keys[dst] = sha256_bytes(json.dumps([salt, flags, cache.file_sha(src)]).encode())
         if not cache.current(dst, keys[dst]):
             todo.append((src, dst))
@@ -573,6 +625,112 @@ def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt=''):
     return len(todo), reused, bad
 
 
+def runtime_sources():
+    """(source, object name) of every runtime file the Windows build compiles."""
+    rt = KIT / 'runtime'
+    out = []
+    for pat in RUNTIME_PATTERNS:
+        for p in sorted(rt.glob(pat)):
+            if p.stem.endswith('_sdl') or p.name == 'linux.c':
+                continue
+            out.append((p, 'rt_' + p.relative_to(rt).as_posix().replace('/', '_').rsplit('.', 1)[0] + '.o'))
+    return out
+
+
+def per_install_names():
+    """The basenames of the generated headers and of every runtime header that includes one, at any depth."""
+    rt = KIT / 'runtime'
+    headers = {}
+    for p in list(rt.rglob('*.h')) + list(rt.rglob('*.inc')):
+        headers[p.name] = {os.path.basename(i) for i in INCLUDE.findall(p.read_text(encoding='utf-8', errors='replace'))}
+    tainted = set(GENERATED_HEADERS)
+    grew = True
+    while grew:
+        grew = False
+        for name, incs in headers.items():
+            if name not in tainted and incs & tainted:
+                tainted.add(name)
+                grew = True
+    return tainted
+
+
+def per_install(src, tainted):
+    incs = {os.path.basename(i) for i in INCLUDE.findall(Path(src).read_text(encoding='utf-8', errors='replace'))}
+    return bool(incs & tainted)
+
+
+def clang_version(clang, env):
+    p = subprocess.run([str(clang), '--version'], capture_output=True, text=True, env=env)
+    return (p.stdout.splitlines() or [''])[0].strip()
+
+
+def runtime_digest():
+    return tree_digest(KIT / 'runtime', ('**/*',))
+
+
+def runtime_cmd(clang, clangxx, inc):
+    def cmd_for(src, dst):
+        cpp = src.suffix in ('.cpp', '.cxx')
+        # the lifted code at -O1 (its size makes -O2 slow to build), the runtime at -O2; neither may assume strict
+        # aliasing: the lifted code reaches guest memory through casts of one address to several types
+        # (tools/build_game.py's flags)
+        guest = dst.name.startswith(('main_', 'sdk_', 'subsdk0_'))
+        return [str(clangxx if cpp else clang), '-c', '-std=gnu++17' if cpp else '-std=gnu11', '-O1' if guest else '-O2',
+                '-fno-strict-aliasing', '-w', *inc, '-o', str(dst), str(src)]
+    return cmd_for
+
+
+def make_runtime_lib(dest, msys, jobs, obj=None):
+    """--make-runtime-lib: compile every runtime source that does not include a per-install header into
+    <dest>/libnx2navirt.a, with runtime-lib.json naming the runtime/ tree and the compiler it was built from. The
+    objects stay in obj (default <dest>/obj), which a release keeps out of what it ships."""
+    dest = Path(dest).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    obj = Path(obj).resolve() if obj else dest / 'obj'
+    obj.mkdir(parents=True, exist_ok=True)
+    clang, clangxx = msys / 'bin' / 'clang.exe', msys / 'bin' / 'clang++.exe'
+    env = dict(os.environ, PATH=str(msys / 'bin') + os.pathsep + os.environ.get('PATH', ''))
+    rt = KIT / 'runtime'
+    tainted = per_install_names()
+    srcs = [(p, obj / name) for p, name in runtime_sources() if not per_install(p, tainted)]
+    inc = ['-I', str(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(msys / 'include' / 'vma')]
+    cache = ObjectCache(obj / 'objects.json', {'<kit>': KIT})
+    t0 = time.time()
+    compiled, reused, bad = compile_all(srcs, runtime_cmd(clang, clangxx, inc), cache, jobs, env,
+                                        lambda d, t: (d % 20 == 0 or d == t) and say(f'  {d} of {t}'),
+                                        salt=compiler_id(clang, env))
+    if bad:
+        for src, err in bad[:3]:
+            print(f'--- {src}\n{err}', file=sys.stderr)
+        fail(f'{len(bad)} runtime files did not compile')
+    lib = dest / RUNTIME_LIB
+    lib.unlink(missing_ok=True)
+    rsp = dest / 'ar.rsp'
+    rsp.write_text('\n'.join('"%s"' % o.as_posix() for _, o in srcs), encoding='utf-8')
+    ar = os.environ.get('NX2NAVI_AR') or str(msys / 'bin' / 'ar.exe')
+    if subprocess.run([ar, 'rcs', str(lib), '@' + str(rsp)], env=env).returncode:
+        fail('the runtime library could not be archived')
+    meta = {'runtime': runtime_digest(), 'compiler': clang_version(clang, env),
+            'objects': sorted(o.name for _, o in srcs)}
+    (dest / 'runtime-lib.json').write_text(json.dumps(meta, indent=1), encoding='utf-8')
+    rsp.unlink(missing_ok=True)
+    say(f'{lib}: {len(srcs)} runtime files ({compiled} compiled, {reused} kept), {lib.stat().st_size / 1e6:.1f} MB, '
+        f'{time.time() - t0:.0f} s')
+
+
+def prebuilt_runtime(clang, env):
+    """(library, object names it holds) when the kit's lib/ matches this runtime/ and this compiler, else None."""
+    lib, meta = KIT / 'lib' / RUNTIME_LIB, KIT / 'lib' / 'runtime-lib.json'
+    try:
+        m = json.loads(meta.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not lib.is_file() or m.get('runtime') != runtime_digest() or m.get('compiler') != clang_version(clang, env):
+        say('  the prebuilt runtime does not match this kit or compiler: compiling runtime/')
+        return None
+    return lib, set(m.get('objects', []))
+
+
 def step_compile(out, cache_dir, msys, jobs):
     lift, gen, obj = cache_dir / 'lift', cache_dir / 'gen', cache_dir / 'obj'
     gen.mkdir(parents=True, exist_ok=True)
@@ -583,23 +741,17 @@ def step_compile(out, cache_dir, msys, jobs):
     if subprocess.run(py_cmd(KIT / 'tools' / 'romfs_index.py', '--romfs', out / 'romfs', '--out', gen)).returncode:
         fail('the RomFS index could not be written')
     srcs = [(p, obj / f'{mod}_{p.stem}.o') for mod in ('main', 'sdk', 'subsdk0') for p in sorted((lift / mod).glob('*.c'))]
-    for pat in ('*.c', '*.cpp', 'platform/*.c', 'ui/*.cpp', 'third_party/imgui/*.cpp', 'third_party/imgui/backends/*.cpp'):
-        for p in sorted(rt.glob(pat)):
-            if p.stem.endswith('_sdl') or p.name == 'linux.c':
-                continue
-            srcs.append((p, obj / ('rt_' + p.relative_to(rt).as_posix().replace('/', '_').rsplit('.', 1)[0] + '.o')))
+    prebuilt = prebuilt_runtime(clang, env)
+    runtime = [(p, obj / name) for p, name in runtime_sources()]
+    if prebuilt:
+        runtime = [(p, o) for p, o in runtime if o.name not in prebuilt[1]]
+        say(f'  the runtime comes prebuilt; {len(runtime)} runtime files are compiled here')
+    srcs += runtime
     srcs += [(modules_c(lift, out, gen), obj / 'modules.o'), (gen / 'shim.c', obj / 'shim.o')]
     inc = ['-I', str(rt), '-I', str(lift), '-I', str(gen), '-I', str(rt / 'third_party' / 'imgui'),
            '-I', str(msys / 'include' / 'vma')]
     cid = compiler_id(clang, env)
-
-    def cmd_for(src, dst):
-        cpp = src.suffix in ('.cpp', '.cxx')
-        # the lifted code at -O1 (its size makes -O2 slow to build), the runtime at -O2; neither may assume strict aliasing:
-        # the lifted code reaches guest memory through casts of one address to several types (tools/build_game.py's flags)
-        guest = dst.name.startswith(('main_', 'sdk_', 'subsdk0_'))
-        return [str(clangxx if cpp else clang), '-c', '-std=gnu++17' if cpp else '-std=gnu11', '-O1' if guest else '-O2',
-                '-fno-strict-aliasing', '-w', *inc, '-o', str(dst), str(src)]
+    cmd_for = runtime_cmd(clang, clangxx, inc)
 
     t0 = time.time()
     last = [0.0]
@@ -613,7 +765,7 @@ def step_compile(out, cache_dir, msys, jobs):
             say(f'  compiled {done} of {total}, {now - t0:.0f} s')
 
     say(f'  {len(srcs)} files on {jobs} threads')
-    cache = ObjectCache(obj / 'objects.json')
+    cache = ObjectCache(obj / 'objects.json', {'<kit>': KIT})
     compiled, reused, bad = compile_all(srcs, cmd_for, cache, jobs, env, progress, salt=cid)
     say(f'  {compiled} compiled, {reused} unchanged since the last build')
     if bad:
@@ -632,8 +784,13 @@ def step_compile(out, cache_dir, msys, jobs):
     exe = out / EXE_NAME
     rsp = cache_dir / 'link.rsp'
     rsp.write_text('\n'.join('"%s"' % o.as_posix() for o in objs), encoding='utf-8')
-    link_key = sha256_bytes(json.dumps([LINK_LIBS, cid] + [[o.name, o.stat().st_size, o.stat().st_mtime_ns]
-                                                          for o in objs]).encode())
+    # lld links several times faster than GNU ld; the stack matches tools/build_game.py's build
+    ld = ['-fuse-ld=lld', '-Wl,--stack,16777216'] if (msys / 'bin' / 'ld.lld.exe').is_file() else []
+    lib = ['-Wl,--whole-archive', str(prebuilt[0]), '-Wl,--no-whole-archive'] if prebuilt else []
+    stamp = [[o.name, o.stat().st_size, o.stat().st_mtime_ns] for o in objs]
+    if prebuilt:
+        stamp.append([prebuilt[0].name, prebuilt[0].stat().st_size, sha256_file(prebuilt[0])])
+    link_key = sha256_bytes(json.dumps([LINK_LIBS, ld, cid] + stamp).encode())
     state_link = cache_dir / 'link.key'
     if exe.is_file() and state_link.is_file() and state_link.read_text(encoding='utf-8') == link_key:
         say('  ocarina.exe is current, not linked again')
@@ -641,8 +798,8 @@ def step_compile(out, cache_dir, msys, jobs):
         emit('phase', step='compile', phase='link')
         say('  linking')
         tmp = out / (EXE_NAME + '.new')
-        p = subprocess.run([str(clangxx), '-o', str(tmp), '@' + str(rsp), '-L', str(msys / 'lib'), *LINK_LIBS],
-                           capture_output=True, text=True, env=env, errors='replace')
+        p = subprocess.run([str(clangxx), *ld, '-o', str(tmp), '@' + str(rsp), *lib, '-L', str(msys / 'lib'),
+                            *LINK_LIBS], capture_output=True, text=True, env=env, errors='replace')
         if p.returncode:
             print(p.stderr[-4000:], file=sys.stderr)
             tmp.unlink(missing_ok=True)
@@ -730,9 +887,14 @@ def main():
     ap.add_argument('--msys', default=r'C:\msys64\ucrt64', help='MSYS2 UCRT64 folder (default C:\\msys64\\ucrt64)')
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 4, help='parallel compiles')
     ap.add_argument('--events', action='store_true', help='machine-readable progress lines on stdout ("@@" + JSON)')
+    ap.add_argument('--make-runtime-lib', metavar='DIR', help='build the prebuilt runtime library of a release into DIR')
+    ap.add_argument('--obj', help='with --make-runtime-lib: the folder for its objects')
     ap.add_argument('--until', choices=STEPS, help=argparse.SUPPRESS)   # tests: stop after this step
     a = ap.parse_args()
     EVENTS = a.events
+    if a.make_runtime_lib:
+        make_runtime_lib(a.make_runtime_lib, Path(a.msys), a.jobs, a.obj)
+        return
     given = bool(a.nup) + bool(a.exefs or a.romfs) + bool(a.rebuild)
     if given != 1 or (not a.nup and not a.rebuild and not (a.exefs and a.romfs)):
         ap.error('give --nup, both --exefs and --romfs, or --rebuild')

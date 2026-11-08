@@ -28,8 +28,8 @@ from . import net
 REPO = 'https://repo.msys2.org/mingw/ucrt64/'
 MIRRORS = (REPO, 'https://mirror.msys2.org/mingw/ucrt64/')
 PREFIX = 'mingw-w64-ucrt-x86_64-'
-ROOTS = ('clang', 'gcc', 'sdl3', 'opus', 'libvpx', 'dav1d', 'zstd', 'vulkan-headers', 'vulkan-loader',
-         'vulkan-memory-allocator')
+ROOTS = ('clang', 'gcc', 'lld', 'sdl3', 'opus', 'libvpx', 'dav1d', 'zstd', 'vulkan-headers', 'vulkan-loader',
+         'vulkan-memory-allocator')   # lld: the game links several times faster than with GNU ld
 REQUIRED = ('bin/clang.exe', 'bin/clang++.exe', 'bin/SDL3.dll', 'lib/libSDL3.dll.a', 'include/vma')
 SKIP_SHARE = ('ucrt64/share/doc/', 'ucrt64/share/man/', 'ucrt64/share/info/', 'ucrt64/share/locale/',
               'ucrt64/share/gtk-doc/', 'ucrt64/share/licenses/')
