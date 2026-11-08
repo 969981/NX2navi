@@ -49,7 +49,8 @@ With extracted folders instead, use `--exefs "C:\path\exefs" --romfs "C:\path\ro
 check that your dump is the right version, add `--check` (it builds nothing).
 
 The build checks the version, unpacks the program files, packs the 26 GB RomFS image (every file is checked against
-the dump's own checksums), turns the game's code into C and compiles it (about 6 minutes on a 16-thread Ryzen 7; longer on fewer cores).
+the dump's own checksums) while it turns the game's code into C and compiles it (about 6 minutes on a 16-thread
+Ryzen 7; longer on fewer cores). The game it builds is for this PC's processor.
 You can use your PC meanwhile. If it stops,
 run the same command again: finished steps are skipped.
 
@@ -60,7 +61,9 @@ When it says `finished`, start `C:\Games\Ocarina\ocarina.exe`. You can delete `C
 
 - **F1** opens the settings menu. Settings are saved in `nx2navi.ini` beside the game; saves go to `profile\`.
 - The first time a shader appears it is translated, which can stutter briefly; it is cached from then on. After an
-  update of the kit or your graphics driver, the next start shows "Preparing shaders" once.
+  update of the kit or your graphics driver, the next start shows "Preparing shaders" once. With a driver
+  that has Vulkan's graphics pipeline library it lasts at most about 20 seconds once the shaders are translated, and
+  the remaining pipelines are built in the background while you play.
 - Logs are in `logs\`. When reporting a problem, say where you were in the game and which graphics card you have, and
   attach `logs\nx2navi.log`. Never send game files.
 

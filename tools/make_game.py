@@ -10,7 +10,8 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
   2. exefs    the five ExeFS files, every module's segments unpacked (ZBIC through the player's own `zbic` package)
               and stored plainly, as the runtime's loader reads them -> <out>/exefs
   3. romfs    every RomFS file, checked against the container's sha256, into one image -> <out>/romfs/romfs.bin and
-              index.json (16-byte aligned, in the byte order of the paths)
+              index.json (16-byte aligned, in the byte order of the paths). When the lift and the compile follow, it
+              runs on a thread of its own beside them: only the RomFS index and romfs.c wait for the image
   4. lift     recomp/gen.py with recomp/patches-v111.txt -> <out>/build-cache/lift, plus the two SDK bring-up fixes
   5. compile  the lifted C and runtime/ with MSYS2's clang, linked into <out>/ocarina.exe; the MSYS2 DLLs it loads,
               the shader translator and romfs-index.bin beside it
@@ -23,7 +24,9 @@ is not part of that key, so a kit in another folder (the launcher keeps each ver
 A kit with lib/libnx2navirt.a built by --make-runtime-lib for the same runtime/ and the same compiler links the
 runtime from it and compiles only the runtime files that include headers written per install. The new ocarina.exe
 replaces the old one only once it links (with lld when the toolchain has it), so a failed build leaves the last good
-one in place.
+one in place. Compiles run on every logical processor, the largest files first. The lifted code is built for this
+PC's x86-64 level (cpu_level), with MSYS2 CLANG64's clang when it sits beside the UCRT64 folder and reports the same
+version (fast_clang: the same objects, about a fifth faster).
 
     python tools/make_game.py --make-runtime-lib <kit>/lib --msys <ucrt64>   # the release's prebuilt runtime
 
@@ -47,6 +50,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -96,22 +100,51 @@ RUN_SCRIPT = ('import os, runpy, sys; s = sys.argv[1]; sys.argv = sys.argv[1:]; 
               'sys.path.insert(0, os.path.dirname(os.path.abspath(s))); runpy.run_path(s, run_name="__main__")')
 
 EVENTS = False
+OUT_LOCK = threading.Lock()   # the RomFS step prints from its own thread (main)
 
 
 def say(msg):
-    print(msg, flush=True)
+    with OUT_LOCK:
+        print(msg, flush=True)
 
 
 def emit(ev, **fields):
     """One "@@{json}" line for the launcher (--events); nothing otherwise."""
     if EVENTS:
-        print('@@' + json.dumps({'ev': ev, **fields}, ensure_ascii=False), flush=True)
+        line = '@@' + json.dumps({'ev': ev, **fields}, ensure_ascii=False)
+        with OUT_LOCK:
+            print(line, flush=True)
 
 
 def fail(msg):
     emit('error', message=msg)
-    print(f'\nerror: {msg}', file=sys.stderr, flush=True)
+    with OUT_LOCK:
+        print(f'\nerror: {msg}', file=sys.stderr, flush=True)
     sys.exit(1)
+
+
+class Background:
+    """One step on a thread of its own. join() waits for it and raises its failure (fail's SystemExit included) in
+    the caller; failed() tells the caller early, so it can stop work that would be thrown away."""
+
+    def __init__(self, fn):
+        self.exc = None
+        self.thread = threading.Thread(target=self._run, args=(fn,), name='romfs', daemon=True)
+        self.thread.start()
+
+    def _run(self, fn):
+        try:
+            fn()
+        except BaseException as e:   # noqa: B036 - handed to join()
+            self.exc = e
+
+    def failed(self):
+        return self.exc is not None
+
+    def join(self):
+        self.thread.join()
+        if self.exc is not None:
+            raise self.exc
 
 
 def py_cmd(script, *args):
@@ -324,11 +357,11 @@ def step_romfs(src, out, jobs):
                 done += size
             emit('progress', step='romfs', done=done, total=total, unit='bytes')
             if start // batch % 40 == 0:
-                say(f'  {done / 1e9:5.1f} of {total / 1e9:.1f} GB, {time.time() - t0:.0f} s')
+                say(f'  RomFS {done / 1e9:5.1f} of {total / 1e9:.1f} GB, {time.time() - t0:.0f} s')
     part.replace(dst / 'romfs.bin')
     index = {'status': 'pass', 'romfs_size': pos, 'romfs_sha256': h.hexdigest(), 'files': entries}
     (dst / 'index.json').write_text(json.dumps(index), encoding='utf-8')
-    say(f'  image {pos / 1e9:.2f} GB in {time.time() - t0:.0f} s')
+    say(f'  RomFS image {pos / 1e9:.2f} GB in {time.time() - t0:.0f} s')
 
 
 # ---------------------------------------------------------------- lift
@@ -581,10 +614,12 @@ def compiler_id(clang, env):
     return sha256_bytes(f'{p.stdout}\n{st.st_size}\n{int(st.st_mtime)}'.encode())
 
 
-def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt=''):
+def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt='', stop=None):
     """Compile each (source, object) whose object is not current in cache. cmd_for(src, dst) -> argv without the
     dependency-file options; salt identifies the compiler. Returns (compiled, reused, failures) with failures as
-    (src, stderr tail). The cache's roots stand for their paths in the flags too."""
+    (src, stderr tail). The cache's roots stand for their paths in the flags too. The largest sources start first:
+    compile time grows with size, and a big file that started last would run on alone after the others finished.
+    stop() true makes the compiles not yet started end at once, unrecorded (a step beside this one failed)."""
     todo, keys = [], {}
     for src, dst in srcs:
         cmd = cmd_for(src, dst)
@@ -597,10 +632,13 @@ def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt=''):
         if not cache.current(dst, keys[dst]):
             todo.append((src, dst))
     reused = len(srcs) - len(todo)
+    todo.sort(key=lambda job: job[0].stat().st_size, reverse=True)
 
     def cc(job):
         src, dst = job
         dep = dst.with_suffix('.d')
+        if stop and stop():
+            return src, dst, dep, None, ''
         cmd = cmd_for(src, dst)
         cmd[1:1] = ['-MMD', '-MF', str(dep)]
         p = subprocess.run(cmd, capture_output=True, text=True, env=env, errors='replace')
@@ -612,6 +650,8 @@ def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt=''):
     with concurrent.futures.ThreadPoolExecutor(max(1, jobs)) as ex:
         for src, dst, dep, rc, err in ex.map(cc, todo):
             done += 1
+            if rc is None:   # not started (stop)
+                continue
             if rc:
                 bad.append((src, err))
                 cache.forget(dst)
@@ -635,13 +675,13 @@ def runtime_sources():
     return out
 
 
-def per_install_names():
+def per_install_names(generated=GENERATED_HEADERS):
     """The basenames of the generated headers and of every runtime header that includes one, at any depth."""
     rt = KIT / 'runtime'
     headers = {}
     for p in list(rt.rglob('*.h')) + list(rt.rglob('*.inc')):
         headers[p.name] = {os.path.basename(i) for i in INCLUDE.findall(p.read_text(encoding='utf-8', errors='replace'))}
-    tainted = set(GENERATED_HEADERS)
+    tainted = set(generated)
     grew = True
     while grew:
         grew = False
@@ -666,15 +706,60 @@ def runtime_digest():
     return tree_digest(KIT / 'runtime', ('**/*',))
 
 
-def runtime_cmd(clang, clangxx, inc):
+# The x86-64 levels the lifted code is built and tested for (docs/building.md, "Checks"), as the macros clang defines
+# for a CPU that has them.
+CPU_V2 = {'__SSE3__', '__SSSE3__', '__SSE4_1__', '__SSE4_2__', '__POPCNT__', '__LAHF_SAHF__',
+          '__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16'}
+CPU_V3 = CPU_V2 | {'__AVX__', '__AVX2__', '__BMI__', '__BMI2__', '__F16C__', '__FMA__', '__LZCNT__', '__MOVBE__',
+                   '__XSAVE__'}
+
+
+def cpu_level(clang, env):
+    """This PC's x86-64 level for the lifted code: 3 (AVX2, FMA, BMI2), 2 (SSE4.2, POPCNT) or 0 when clang cannot
+    tell. The game runs on the PC that builds it, so it takes this CPU's level, as tools/build_game.py --cpu does by
+    hand. Without one the lifted code would be generic x86-64: every fused multiply-add of the game a call to
+    runtime/fma.c's software fma, and a level the differential tests do not cover."""
+    p = subprocess.run([str(clang), '-march=native', '-E', '-dM', '-x', 'c', os.devnull], capture_output=True,
+                       text=True, env=env, errors='replace')
+    have = set(re.findall(r'^#define (__\w+) ', p.stdout, re.M)) if p.returncode == 0 else set()
+    return 3 if CPU_V3 <= have else 2 if CPU_V2 <= have else 0
+
+
+def clang_ident(clang, env):
+    """(version, target) a clang reports, or None when it does not run."""
+    try:
+        p = subprocess.run([str(clang), '--version'], capture_output=True, text=True, env=env, errors='replace')
+    except OSError:
+        return None
+    v, t = re.search(r'clang version (\S+)', p.stdout), re.search(r'^Target: (\S+)', p.stdout, re.M)
+    return (v.group(1), t.group(1)) if p.returncode == 0 and v and t else None
+
+
+def fast_clang(msys, clang, env):
+    """MSYS2's CLANG64 clang beside the UCRT64 one (msys64/clang64, which the launcher installs): the same LLVM release
+    built with profile-guided optimisation, about a fifth faster on the lifted code. With UCRT64's headers
+    (--sysroot) it writes the same objects as UCRT64's clang, byte for byte but the COFF timestamp; it is used only
+    when it reports the same version and target. None otherwise."""
+    fast = Path(msys).parent / 'clang64' / 'bin' / 'clang.exe'
+    if not fast.is_file():
+        return None
+    mine = clang_ident(clang, env)
+    return fast if mine and clang_ident(fast, env) == mine else None
+
+
+def runtime_cmd(clang, clangxx, inc, level=0, fast=None, msys=None):
+    """fast: fast_clang's compiler for the lifted code, with msys as its sysroot."""
     def cmd_for(src, dst):
         cpp = src.suffix in ('.cpp', '.cxx')
         # the lifted code at -O1 (its size makes -O2 slow to build), the runtime at -O2; neither may assume strict
         # aliasing: the lifted code reaches guest memory through casts of one address to several types
-        # (tools/build_game.py's flags)
+        # (tools/build_game.py's flags). The lifted code is built for this PC's level (cpu_level); the runtime
+        # stays generic, so the prebuilt one serves every PC (its vectors are 16 bytes, passed alike at every level).
         guest = dst.name.startswith(('main_', 'sdk_', 'subsdk0_'))
-        return [str(clangxx if cpp else clang), '-c', '-std=gnu++17' if cpp else '-std=gnu11', '-O1' if guest else '-O2',
-                '-fno-strict-aliasing', '-w', *inc, '-o', str(dst), str(src)]
+        march = [f'-march=x86-64-v{level}'] if guest and level else []
+        cc = [str(fast), f'--sysroot={msys}'] if guest and fast else [str(clangxx if cpp else clang)]
+        return [*cc, '-c', '-std=gnu++17' if cpp else '-std=gnu11', '-O1' if guest else '-O2',
+                *march, '-fno-strict-aliasing', '-w', *inc, '-o', str(dst), str(src)]
     return cmd_for
 
 
@@ -729,15 +814,22 @@ def prebuilt_runtime(clang, env):
     return lib, set(m.get('objects', []))
 
 
-def step_compile(out, cache_dir, msys, jobs):
+def romfs_index(out, gen):
+    if subprocess.run(py_cmd(KIT / 'tools' / 'romfs_index.py', '--romfs', out / 'romfs', '--out', gen)).returncode:
+        fail('the RomFS index could not be written')
+
+
+def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
+    """romfs_job: the RomFS step still running beside this one (a first build). Everything that does not include
+    romfs_config.h compiles meanwhile; the RomFS index and the few files that include it follow once it is done."""
     lift, gen, obj = cache_dir / 'lift', cache_dir / 'gen', cache_dir / 'obj'
     gen.mkdir(parents=True, exist_ok=True)
     obj.mkdir(parents=True, exist_ok=True)
     rt = KIT / 'runtime'
     clang, clangxx = msys / 'bin' / 'clang.exe', msys / 'bin' / 'clang++.exe'
     env = dict(os.environ, PATH=str(msys / 'bin') + os.pathsep + os.environ.get('PATH', ''))
-    if subprocess.run(py_cmd(KIT / 'tools' / 'romfs_index.py', '--romfs', out / 'romfs', '--out', gen)).returncode:
-        fail('the RomFS index could not be written')
+    if not romfs_job:
+        romfs_index(out, gen)
     srcs = [(p, obj / f'{mod}_{p.stem}.o') for mod in ('main', 'sdk', 'subsdk0') for p in sorted((lift / mod).glob('*.c'))]
     prebuilt = prebuilt_runtime(clang, env)
     runtime = [(p, obj / name) for p, name in runtime_sources()]
@@ -749,7 +841,14 @@ def step_compile(out, cache_dir, msys, jobs):
     inc = ['-I', str(rt), '-I', str(lift), '-I', str(gen), '-I', str(rt / 'third_party' / 'imgui'),
            '-I', str(msys / 'include' / 'vma')]
     cid = compiler_id(clang, env)
-    cmd_for = runtime_cmd(clang, clangxx, inc)
+    level = cpu_level(clang, env)
+    say(f'  the lifted code is built for x86-64-v{level}, this processor\'s level' if level else
+        '  the lifted code is built for generic x86-64: the processor\'s level could not be read')
+    fast = fast_clang(msys, clang, env)
+    if fast:
+        cid += compiler_id(fast, env)
+        say(f'  the lifted code compiles with {fast}')
+    cmd_for = runtime_cmd(clang, clangxx, inc, level, fast, msys)
 
     t0 = time.time()
     last = [0.0]
@@ -764,7 +863,23 @@ def step_compile(out, cache_dir, msys, jobs):
 
     say(f'  {len(srcs)} files on {jobs} threads')
     cache = ObjectCache(obj / 'objects.json', {'<kit>': KIT})
-    compiled, reused, bad = compile_all(srcs, cmd_for, cache, jobs, env, progress, salt=cid)
+    late = []
+    if romfs_job:   # the lifted chunks include only cpu.h and simd.h: only the runtime and generated files are read
+        tainted = per_install_names(('romfs_config.h',))
+        late = [(s, o) for s, o in runtime + srcs[-2:] if per_install(s, tainted)]
+        say(f'  {len(late)} files wait for the RomFS index: {", ".join(s.name for s, _ in late)}')
+    early = [j for j in srcs if j not in late]
+    compiled, reused, bad = compile_all(early, cmd_for, cache, jobs, env, lambda d, t: progress(d, len(srcs)),
+                                        salt=cid, stop=romfs_job.failed if romfs_job else None)
+    if romfs_job:
+        if romfs_job.thread.is_alive():
+            say('  waiting for the RomFS image')
+        romfs_job.join()   # raises the RomFS step's failure; a failed compile still keeps the finished image
+        if not bad:
+            romfs_index(out, gen)
+            c2, r2, bad = compile_all(late, cmd_for, cache, jobs, env,
+                                      lambda d, t: progress(len(early) + d, len(srcs)), salt=cid)
+            compiled, reused = compiled + c2, reused + r2
     say(f'  {compiled} compiled, {reused} unchanged since the last build')
     if bad:
         for src, err in bad[:3]:
@@ -903,28 +1018,57 @@ def main():
     state['kit'] = kit_version()
     keep_awake()
     t0 = time.time()
+    romfs_job = None
     runs = {'exefs': lambda: step_exefs(src, out), 'romfs': lambda: step_romfs(src, out, min(a.jobs, 8)),
-            'lift': lambda: step_lift(out, cache), 'compile': lambda: step_compile(out, cache, msys, a.jobs)}
-    for name in STEPS:
-        key = step_key(name, src.identity, out)
-        if state['steps'].get(name) == key:
-            say(f'{name}: done before')
-            emit('step', step=name, state='skip')
-        else:
-            # a step that runs makes every step after it run too: their keys hash its output, not its key
-            for later in STEPS[STEPS.index(name):]:
-                state['steps'].pop(later, None)
-            say(f'{name}:')
-            emit('step', step=name, state='start')
-            t = time.time()
-            runs[name]()
-            state['steps'][name] = step_key(name, src.identity, out)
+            'lift': lambda: step_lift(out, cache), 'compile': lambda: step_compile(out, cache, msys, a.jobs, romfs_job)}
+    state_lock = threading.Lock()   # the RomFS step records itself from its own thread
+
+    def save():
+        with state_lock:
             state_path.write_text(json.dumps(state, indent=1), encoding='utf-8')
-            say(f'{name}: {time.time() - t:.0f} s')
-            emit('step', step=name, state='done', seconds=round(time.time() - t, 1))
-        if name == a.until:
-            break
-    state_path.write_text(json.dumps(state, indent=1), encoding='utf-8')
+
+    def run(name):
+        t = time.time()
+        runs[name]()
+        with state_lock:
+            state['steps'][name] = step_key(name, src.identity, out)
+        save()
+        say(f'{name}: {time.time() - t:.0f} s')
+        emit('step', step=name, state='done', seconds=round(time.time() - t, 1))
+
+    try:
+        for name in STEPS:
+            key = step_key(name, src.identity, out)
+            if state['steps'].get(name) == key:
+                say(f'{name}: done before')
+                emit('step', step=name, state='skip')
+            else:
+                # a step that runs makes every step after it run too: their keys hash its output, not its key
+                with state_lock:
+                    for later in STEPS[STEPS.index(name):]:
+                        state['steps'].pop(later, None)
+                say(f'{name}:')
+                emit('step', step=name, state='start')
+                if name == 'romfs' and a.until != 'romfs':
+                    # The RomFS image is mostly disk work, the lift and the compile are processor work: they run side
+                    # by side, and only the RomFS index and the files that include it wait for the image
+                    # (step_compile). A first build takes about as long as the longer of the two, not their sum.
+                    romfs_job = Background(lambda: run('romfs'))
+                else:
+                    run(name)
+            if romfs_job and romfs_job.failed():
+                romfs_job.join()
+            if name == a.until:
+                break
+        if romfs_job:
+            romfs_job.join()
+    except SystemExit:
+        # a failed lift or compile: the RomFS image still finishes and is kept, so the next run starts after it
+        if romfs_job and romfs_job.thread.is_alive():
+            say('waiting for the RomFS image before stopping')
+            romfs_job.thread.join()
+        raise
+    save()
     say(f'\nfinished in {(time.time() - t0) / 60:.1f} min: {out / EXE_NAME}')
     emit('end', exe=str(out / EXE_NAME), seconds=round(time.time() - t0, 1), kit=kit_version())
 
