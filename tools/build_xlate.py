@@ -107,6 +107,9 @@ def prepare_sources() -> Path:
             r = subprocess.run(
                 ["git", "apply", *extra, "--whitespace=nowarn", "--directory", str(src.relative_to(BUILD)), str(patch)],
                 cwd=BUILD, capture_output=True, text=True,
+                # inside a checkout (build/ is in the repository's tree) git apply works relative to the repository
+                # and silently skips paths it ignores: 0021 (InstEmitPermute.cs) went missing and PRMT read as 0
+                env=dict(os.environ, GIT_CEILING_DIRECTORIES=str(BUILD.parent)),
             )
             if r.returncode != 0:
                 sys.exit(f"patch does not apply: {patch.name}\n{r.stdout}{r.stderr}")
