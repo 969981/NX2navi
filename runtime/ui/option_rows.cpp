@@ -41,9 +41,11 @@ static struct { bool on; ImVec2 a, b; float alpha; } g_cursor;
 // Room left on each side of a row for its cursor, which is drawn outside the row's box.
 static float row_margin(void) { return ceilf(skin_cursor_reach(g_scale) * 0.85f); }
 
-// The description pane: this frame's hovered and selected rows, the page's first row, and the last one shown.
+// The description pane: this frame's hovered and selected rows, the page's first row, and the last one shown (of the
+// page g_page: another page starts from its first row's, however it was opened).
 struct Desc { char text[UI_DESC_BYTES]; };
 static Desc g_hover, g_focus, g_first, g_shown;
+static ImGuiID g_page;
 
 // disabled: the note of a row opt_disable_next greyed out, else NULL.
 static void desc_set(Desc &d, const char *desc, const char *key, const CfgMeta *m, const char *disabled) {
@@ -77,6 +79,7 @@ void opt_begin(const char *id, float scale) {
     g_focus_req = false;
     if (g_take_first) ImGui::NavMoveRequestCancel();   // this frame's move goes to the first row instead
     g_hover.text[0] = g_focus.text[0] = g_first.text[0] = 0;
+    if (ImGuiID page = ImGui::GetID(id); page != g_page) g_page = page, g_shown.text[0] = 0;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     avail.y -= g_bottom;
     ImGui::PushID(id);
@@ -146,7 +149,9 @@ static int row_text(const char *key, const char *label, const char *desc, const 
     ImVec2 p = ImGui::GetCursorScreenPos();
     // h whole pixels: ImGui truncates cursor positions, which rounds a fractional height the other way above the window's
     // top (negative y), so the page grew a pixel per row scrolled out and a row scrolled to the bottom was cut off
-    float fs = ImGui::GetFontSize(), w = ImGui::GetContentRegionAvail().x - margin, h = floorf(fs * 2.2f);
+    // at least a pixel wide: InvisibleButton asserts on a zero size (a narrow window), and ImGui reads a negative one as
+    // "up to that far before the right edge", away from the box drawn
+    float fs = ImGui::GetFontSize(), w = fmaxf(ImGui::GetContentRegionAvail().x - margin, 1.0f), h = floorf(fs * 2.2f);
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));   // the row's own border shows the selection
     bool clicked = ImGui::InvisibleButton("##row", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleColor();
@@ -161,6 +166,8 @@ static int row_text(const char *key, const char *label, const char *desc, const 
     }
     bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible;
     int step = clicked && !off ? 2 : 0;
+    // a click of the mouse, not A / Enter / Space: only a click picks an arrow by where the pointer is
+    const bool by_mouse = clicked && hov && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
     g_held = false;
     if (foc && !off) {
         // the left stick arrives as the D-pad (menu.cpp pad_events)
@@ -197,13 +204,21 @@ static int row_text(const char *key, const char *label, const char *desc, const 
     float ty = p.y + fs * 0.25f, ny = p.y + fs * 1.3f;   // the label line and the note line under it
     float right = p.x + w - pad;                         // the value's right edge
     float value_left = right;
+    // The value and its note take at most 60 % of the row: a longer value (a graphics card's full name) is drawn smaller,
+    // down to 75 % of the font size, then clipped, so the label keeps room and nothing reaches past the box.
+    const float cap = fmaxf((w - pad * 2) * 0.6f, 0.0f);
+    float vfs = fs, tv = v.value[0] ? font->CalcTextSizeA(fs, FLT_MAX, 0, v.value).x : 0;
+    if (tv > cap) {
+        vfs = fmaxf(fs * cap / tv, fs * 0.75f);
+        tv = fminf(font->CalcTextSizeA(vfs, FLT_MAX, 0, v.value).x, cap);
+    }
     if (v.arrows && v.value[0]) {   // < value >, drawn (the font has no arrow glyphs); a click on one steps
         float aw = fs * 0.42f, gap = fs * 0.55f, cy = ty + fs * 0.52f;
-        float rx = right - aw, lx = rx - gap - ImGui::CalcTextSize(v.value).x - gap - aw;
+        float rx = right - aw, lx = rx - gap - tv - gap - aw;
         ImU32 ac = off ? kGrey : hov || foc ? SKIN_TEXT : SKIN_TEXT_DIM;
         dl->AddTriangleFilled(ImVec2(lx, cy), ImVec2(lx + aw, cy - aw * 0.75f), ImVec2(lx + aw, cy + aw * 0.75f), ac);
         dl->AddTriangleFilled(ImVec2(rx + aw, cy), ImVec2(rx, cy - aw * 0.75f), ImVec2(rx, cy + aw * 0.75f), ac);
-        if (clicked && !off) {
+        if (by_mouse && !off) {
             float mx = ImGui::GetIO().MousePos.x;
             if (mx >= lx - gap && mx <= lx + aw + gap) step = -1;
             else if (mx >= rx - gap && mx <= rx + aw + gap) step = 1;
@@ -214,27 +229,33 @@ static int row_text(const char *key, const char *label, const char *desc, const 
     if (movable) {   // up and down arrows left of the value; a click on one moves the row
         // a fixed value column (On / Off differ in width) keeps the arrows of the rows in one line
         float aw = fs * 0.42f, gap = fs * 0.55f;
-        float cx = right - fmaxf(ImGui::CalcTextSize(v.value).x, fs * 2.8f) - gap * 2 - aw;
+        float cx = right - fmaxf(tv, fs * 2.8f) - gap * 2 - aw;
         float uy = ty + fs * 0.12f, dy = ty + fs * 0.92f;
         ImU32 ac = off ? kGrey : hov || foc ? SKIN_TEXT : SKIN_TEXT_DIM;
         dl->AddTriangleFilled(ImVec2(cx, uy + aw * 0.7f), ImVec2(cx + aw, uy + aw * 0.7f), ImVec2(cx + aw * 0.5f, uy), ac);
         dl->AddTriangleFilled(ImVec2(cx, dy - aw * 0.7f), ImVec2(cx + aw, dy - aw * 0.7f), ImVec2(cx + aw * 0.5f, dy), ac);
-        if (clicked && !off) {
+        if (by_mouse && !off) {
             ImVec2 mp = ImGui::GetIO().MousePos;
             if (mp.x >= cx - gap * 0.5f && mp.x <= cx + aw + gap * 0.5f) step = mp.y < ty + fs * 0.52f ? 3 : 4;
         }
         value_left = cx - gap;
     }
     if (v.value[0]) {
-        float vx = right - ImGui::CalcTextSize(v.value).x;
-        dl->AddText(ImVec2(vx, ty), off ? kGrey : v.is_default ? IM_COL32(232, 222, 198, 255) : IM_COL32(255, 255, 255, 255),
-                    v.value);
+        float vx = right - tv;
+        ImVec4 vclip(vx, p.y, right, p.y + h);
+        dl->AddText(font, vfs, ImVec2(vx, ty + (fs - vfs) * 0.5f),
+                    off ? kGrey : v.is_default ? IM_COL32(232, 222, 198, 255) : IM_COL32(255, 255, 255, 255), v.value, NULL,
+                    0, &vclip);
         if (!v.arrows && !movable) value_left = vx;
     }
-    if (v.note || v.is_default) {   // under the value, right-aligned with it
+    float note_right = p.x + w - pad;   // where the label's own note stops: short of the value's note, when there is one
+    if (v.note || v.is_default) {   // under the value, right-aligned with it; its start shows when it is too long
         const char *t = v.note ? v.note : menu_text(UI_MENU_DEFAULT_MARK);
-        float tw = font->CalcTextSizeA(small, FLT_MAX, 0, t).x;
-        dl->AddText(font, small, ImVec2(right - tw, ny), v.note ? IM_COL32(250, 206, 130, 255) : SKIN_TEXT_DIM, t);
+        float tw = fminf(font->CalcTextSizeA(small, FLT_MAX, 0, t).x, cap);
+        ImVec4 nclip(right - tw, p.y, right, p.y + h);
+        dl->AddText(font, small, ImVec2(right - tw, ny), v.note ? IM_COL32(250, 206, 130, 255) : SKIN_TEXT_DIM, t, NULL, 0,
+                    &nclip);
+        if (tw > 0) note_right = right - tw - fs * 0.6f;
     }
     // the label and its note, clipped before the value
     ImVec4 clip(p.x, p.y, value_left - fs * 0.6f, p.y + h);
@@ -243,7 +264,10 @@ static int row_text(const char *key, const char *label, const char *desc, const 
                      : off             ? menu_text(UI_MENU_SET_BY_ENV)
                      : m && !m->live ? menu_text(UI_MENU_AFTER_RESTART)
                                      : NULL;
-    if (note) dl->AddText(font, small, ImVec2(p.x + pad, ny), off ? IM_COL32(200, 150, 90, 255) : SKIN_TEXT_DIM, note);
+    ImVec4 note_clip(p.x, p.y, note_right, p.y + h);
+    if (note)
+        dl->AddText(font, small, ImVec2(p.x + pad, ny), off ? IM_COL32(200, 150, 90, 255) : SKIN_TEXT_DIM, note, NULL, 0,
+                    &note_clip);
     ImGui::PopID();
     return off ? 0 : step;
 }
@@ -318,31 +342,33 @@ static void group_divider(void) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + m);
 }
 
-void opt_group_text(const char *title) {
-    group_divider();
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(SKIN_GOLD), "%s", title);
-    ImGui::PopTextWrapPos();
-}
-
-void opt_text_str(const char *text, bool warn) {
-    ImGui::PushTextWrapPos(0);
-    if (warn) ImGui::TextColored(ImVec4(0.95f, 0.66f, 0.40f, 1), "%s", text);
+// Text across the rows' column, inset from its sides as the rows' boxes are and wrapped before their right edge. The
+// cursor already stands at the inset when indented is true (after group_divider).
+static void column_text(const char *text, const ImVec4 *col, bool indented) {
+    const float m = row_margin();
+    if (!indented) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + m);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + fmaxf(ImGui::GetContentRegionAvail().x - m, 1.0f));
+    if (col) ImGui::TextColored(*col, "%s", text);
     else ImGui::TextUnformatted(text);
     ImGui::PopTextWrapPos();
 }
+
+static const ImVec4 kWarn(0.95f, 0.66f, 0.40f, 1);
+
+void opt_group_text(const char *title) {
+    group_divider();
+    const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(SKIN_GOLD);
+    column_text(title, &gold, true);
+}
+
+void opt_text_str(const char *text, bool warn) { column_text(text, warn ? &kWarn : nullptr, false); }
 
 void opt_group(UiTextId title) {
     group_divider();
     ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(SKIN_GOLD), "%s", menu_text(title));
 }
 
-void opt_text(UiTextId text, bool warn) {
-    ImGui::PushTextWrapPos(0);
-    if (warn) ImGui::TextColored(ImVec4(0.95f, 0.66f, 0.40f, 1), "%s", menu_text(text));
-    else ImGui::TextUnformatted(menu_text(text));
-    ImGui::PopTextWrapPos();
-}
+void opt_text(UiTextId text, bool warn) { column_text(menu_text(text), warn ? &kWarn : nullptr, false); }
 
 bool opt_choice_list(const char *key, UiTextId label, const char *const *values, const char *const *names, int n,
                      UiTextId desc, int cur, const char *note) {
@@ -452,14 +478,16 @@ static void fit_text(ImDrawList *dl, float x0, float x1, float y, float h, ImU32
 // The label column and the three cells of a binding row of width w.
 static void bind_columns(float x, float w, float cx[3], float *cw) {
     float lw = floorf(w * 0.34f), gap = floorf(8 * g_scale);
-    *cw = floorf((w - lw - gap * 3) / 3);
+    *cw = fmaxf(floorf((w - lw - gap * 3) / 3), 1.0f);   // a pixel at least: InvisibleButton asserts on a zero width
     for (int c = 0; c < 3; c++) cx[c] = x + lw + gap + c * (*cw + gap);
 }
 
 void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2) {
+    // over the cells of the binding rows: the same inset (opt_bind_row) and the same columns
+    const float margin = row_margin();
     ImVec2 p = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x, cx[3], cw, fs = ImGui::GetFontSize() * 0.8f;
-    bind_columns(p.x, w, cx, &cw);
+    float w = fmaxf(ImGui::GetContentRegionAvail().x - margin * 2, 1.0f), cx[3], cw, fs = ImGui::GetFontSize() * 0.8f;
+    bind_columns(p.x + margin, w, cx, &cw);
     const UiTextId cols[3] = {c0, c1, c2};
     ImFont *font = ImGui::GetFont();
     for (int c = 0; c < 3; c++) {

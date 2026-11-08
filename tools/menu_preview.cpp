@@ -115,10 +115,14 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
     ImGui::TextDisabled("|");
     ImGui::SameLine();
     ImGui::TextUnformatted(menu_text(UI_MENU_TITLE));
+    const float title_end = ImGui::GetItemRectMax().x;
     ImGui::PopFont();
     const char *version = "NX2navi 0.5.0  -  game 1.1.1";
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(version).x);
-    ImGui::TextDisabled("%s", version);
+    float version_x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(version).x;
+    if (ImGui::GetWindowPos().x + version_x >= title_end + ImGui::GetStyle().ItemSpacing.x * 2) {
+        ImGui::SameLine(version_x);
+        ImGui::TextDisabled("%s", version);
+    }
     const ImGuiStyle &st = ImGui::GetStyle();
     float bottom = ImGui::GetFrameHeight() + st.ItemSpacing.y * 2;
     static const UiTextId tabs[] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS};
@@ -142,7 +146,7 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
             static const UiTextId present[] = {UI_MENU_PRESENT_MAILBOX, UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_IMMEDIATE};
             opt_choice("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT, present, 3, UI_MENU_PRESENT_DESC, "in use: VSync");
             static const char *const gpus[] = {""};
-            static const char *const gpu_names[] = {"Automatic"};
+            static const char *const gpu_names[] = {"NVIDIA GeForce RTX 3050 Ti Laptop GPU"};   // a long name
             opt_choice_list("NX2NAVI_GPU_INDEX", UI_MENU_GPU, gpus, gpu_names, 1, UI_MENU_GPU_DESC, 0);
             static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
             opt_choice("NX2NAVI_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
@@ -163,7 +167,7 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
     const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
     float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
     float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap, y));
+    ImGui::SetCursorPos(ImVec2(fmaxf(st.WindowPadding.x, ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap), y));
     skin_widget_button(cont, ImVec2(bw, 0), scale);
     ImGui::SameLine(0, gap);
     skin_widget_button(quit, ImVec2(bw, 0), scale);
@@ -296,7 +300,7 @@ int main(int argc, char **argv) {
     }
     const char *font = argv[1], *scene = argv[2], *out = argv[5];
     int w = atoi(argv[3]), h = atoi(argv[4]);
-    float scale = h / 1080.0f;
+    float scale = fmaxf(fminf((float)h, w * 0.68f), 720.0f) / 1080.0f;   // as menu.cpp menu_scale at 100 % display scale
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;

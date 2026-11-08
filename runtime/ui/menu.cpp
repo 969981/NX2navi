@@ -85,13 +85,20 @@ static std::atomic<int> g_reset;    // opened or closed since the last laid-out 
 // (F1, Esc), the polling thread (combo) and the present path (Continue, B) race.
 static PlatMutex open_lock = PLAT_MUTEX_INIT;
 
-// want 0 or 1 sets the state; -1 flips it. Returns the new state.
+static PlatMutex ev_lock = PLAT_MUTEX_INIT;   // the event queue below
+static int ev_n;
+
+// want 0 or 1 sets the state; -1 flips it. Returns the new state. The window events queued before the change go with it:
+// keys pressed just before a close would otherwise reach the menu when it next opens.
 static int change_open(int want) {
     plat_mutex_lock(&open_lock);
     int open = want < 0 ? !g_open.load() : want;
     if (g_open.load() != open) {
         g_open.store(open);
         g_reset.store(1);
+        plat_mutex_lock(&ev_lock);
+        ev_n = 0;
+        plat_mutex_unlock(&ev_lock);
         input_menu(open);
         menu_sound_play(open ? MENU_SOUND_OPEN : MENU_SOUND_CLOSE);
         rt_log("menu: %s", open ? "open" : "closed");
@@ -103,9 +110,9 @@ static int change_open(int want) {
 static void set_open(int open) { change_open(open); }
 
 static int g_failed_flag();
-// The boot screen is up (menu_boot_set): the menu does not open, as it would not be drawn while its keys queued up and
-// changed settings once the game ran.
-static std::atomic<int> g_booting{0};
+// Until the game's first frame (menu_overlay_frame), boot screen included: the menu does not open, as it would not be
+// drawn while its keys queued up and changed settings once the game ran.
+static std::atomic<int> g_booting{1};
 extern "C" int menu_is_open(void) { return g_open.load(std::memory_order_relaxed); }
 extern "C" void menu_toggle(void) {
     if (!g_failed_flag() && !g_booting.load(std::memory_order_acquire)) change_open(-1);
@@ -114,13 +121,17 @@ extern "C" void menu_toggle(void) {
 // ---- events from the window adapter, queued while the menu is open; the present path hands them to ImGui
 enum { EV_KEY, EV_POS, EV_BUTTON, EV_WHEEL, EV_FOCUS, EV_MAX = 256 };
 struct Ev { int type, a, b; float x, y; };
-static PlatMutex ev_lock = PLAT_MUTEX_INIT;
 static Ev ev_q[EV_MAX];
-static int ev_n;
 
 static void push(Ev e) {
     if (!menu_is_open()) return;
     plat_mutex_lock(&ev_lock);
+    // checked again under the lock: change_open empties the queue after the state changes, so an event of the closed
+    // menu cannot slip in behind that
+    if (!menu_is_open()) {
+        plat_mutex_unlock(&ev_lock);
+        return;
+    }
     if (e.type == EV_POS && ev_n && ev_q[ev_n - 1].type == EV_POS) ev_q[ev_n - 1] = e;   // only the newest position
     else if (ev_n < EV_MAX) ev_q[ev_n++] = e;
     plat_mutex_unlock(&ev_lock);
@@ -142,7 +153,12 @@ static void drain_events(ImGuiIO &io) {
     for (int i = 0; i < n; i++) {
         const Ev &e = q[i];
         switch (e.type) {
-        case EV_KEY: io.AddKeyEvent((ImGuiKey)e.a, e.b != 0); break;
+        case EV_KEY:
+            io.AddKeyEvent((ImGuiKey)e.a, e.b != 0);
+            // ImGui takes the modifier state (io.KeyShift, io.KeyCtrl: Shift+Tab, Ctrl+Up) from these keys only
+            if (e.a == ImGuiKey_LeftShift) io.AddKeyEvent(ImGuiMod_Shift, e.b != 0);
+            if (e.a == ImGuiKey_LeftCtrl) io.AddKeyEvent(ImGuiMod_Ctrl, e.b != 0);
+            break;
         case EV_POS: io.AddMousePosEvent(e.x, e.y); break;
         case EV_BUTTON: io.AddMouseButtonEvent(e.a, e.b != 0); break;
         case EV_WHEEL: io.AddMouseWheelEvent(e.x, e.y); break;
@@ -203,12 +219,13 @@ static ImGuiStyle g_base_style;   // the menu's style at 1080 lines
 static uint64_t g_last_ns;
 static uint64_t g_cost_ns, g_cost_frames;   // CPU time of layout and recording while open, logged per 600 frames
 
-// Sizes are tuned for 1080 lines and follow the window's height. Under 720 lines at 100% display scale they stay at the
-// 720 size; that floor grows with the window's DPI, so a small window on a 150% or 200% display (sizes are physical
-// pixels) still gets text as large as the display scale asks for.
-static float menu_scale(uint32_t h) {
-    float least = 720.0f * (float)gfx_window_dpi() / 96.0f;
-    return ((float)h >= least ? (float)h : least) / 1080.0f;
+// Sizes are tuned for 1080 lines and follow the window's height, or its width in a window narrower than 1.47:1, where
+// the menu's 1400 pixels at 1080 lines would no longer fit 88 % of the width (layout_menu). Under 720 lines at 100%
+// display scale they stay at the 720 size; that floor grows with the window's DPI, so a small window on a 150% or 200%
+// display (sizes are physical pixels) still gets text as large as the display scale asks for.
+static float menu_scale(uint32_t w, uint32_t h) {
+    float least = 720.0f * (float)gfx_window_dpi() / 96.0f, lines = fminf((float)h, (float)w * 0.68f);
+    return (lines >= least ? lines : least) / 1080.0f;
 }
 
 // The gold of the title and its Triforce (the rest of the menu's colours: ui/menu_skin.cpp skin_style).
@@ -230,6 +247,8 @@ static void make_context(void) {
     io.LogFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     io.BackendPlatformName = "nx2navi_menu";
+    // no window switcher on Ctrl+Tab (the menu is one window; the switcher would list its inner windows by their ids)
+    GImGui->ConfigNavWindowingKeyNext = GImGui->ConfigNavWindowingKeyPrev = 0;
     skin_style(g_base_style);
     ImGui::GetStyle() = g_base_style;
     g_ctx_ok = 1;
@@ -362,11 +381,12 @@ static int fonts_up(float scale) {
         fa->AddFontFromMemoryTTF((void *)roboto_ttf, (int)sizeof roboto_ttf, 26.0f * scale, &fc, kRanges);
     }
     uint8_t *data[N] = {};
-    ImVector<ImWchar> ranges[N];
+    uint64_t sizes[N] = {};
+    ImVector<ImWchar> ranges[N], title_ranges[N];
     int merged = 0;
     for (int i = 0; i < N; i++) {
         char path[512];
-        uint64_t size = 0;
+        uint64_t &size = sizes[i];
         if (!plat_font_path(kCjk[i].lang, path, sizeof path) || !(data[i] = plat_file_read(path, &size))) continue;
         if (!font_usable(data[i], size)) {
             rt_log("menu: system font %s left out: the font parser cannot read it (%llu bytes)", path,
@@ -399,6 +419,20 @@ static int fonts_up(float scale) {
         rc.MergeMode = true;
         rc.FontDataOwnedByAtlas = false;
         fa->AddFontFromMemoryTTF((void *)roboto_ttf, (int)sizeof roboto_ttf, 30.0f * scale, &rc, kRanges);
+        // what the title face shows in the CJK languages: the menu's title and tabs (Simplified Chinese menu text) and
+        // the boot screen's title (the game's language)
+        static const UiTextId titles[] = {UI_MENU_TITLE, UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
+                                          UI_MENU_TAB_CONTROLS, UI_BOOT_TITLE};
+        for (int i = 0; i < N; i++) {
+            if (!data[i]) continue;
+            ImFontGlyphRangesBuilder b;
+            for (UiTextId id : titles) b.AddText(ui_text_in(kCjk[i].lang, id));
+            b.BuildRanges(&title_ranges[i]);
+            ImFontConfig mc;
+            mc.MergeMode = true;
+            mc.FontDataOwnedByAtlas = false;
+            fa->AddFontFromMemoryTTF(data[i], (int)sizes[i], 31.0f * scale, &mc, title_ranges[i].Data);
+        }
     }
     skin_atlas_add(fa);    // the boxes' grain tile (ui/menu_skin.cpp), drawn into the atlas once it is built
     skin_atlas_fill(fa);   // builds the atlas, which the upload below then takes as it is
@@ -414,6 +448,27 @@ static int fonts_up(float scale) {
     rt_log("menu: font atlas at %.1f px, language names from %d of %d system fonts", 26.0f * scale, merged, (int)N);
     g_font_scale = ok ? scale : 0;
     return ok;
+}
+
+// The atlas for scale. While the scale keeps changing (the window being resized), the atlas is made again only once it
+// has held for a quarter of a second, and the old one is drawn scaled meanwhile (io.FontGlobalScale): each atlas reads
+// the system fonts from disk and waits for the queue to upload. 0 when no atlas could be made.
+static float g_scale_seen;
+static uint64_t g_scale_seen_ns;
+
+static int fonts_for(float scale, uint64_t now) {
+    ImGuiIO &io = ImGui::GetIO();
+    if (g_font_scale == scale) {
+        io.FontGlobalScale = 1;
+        return 1;
+    }
+    if (scale != g_scale_seen) g_scale_seen = scale, g_scale_seen_ns = now;
+    if (g_font_scale > 0 && now - g_scale_seen_ns < 250000000ull) {
+        io.FontGlobalScale = scale / g_font_scale;
+        return 1;
+    }
+    io.FontGlobalScale = 1;
+    return fonts_up(scale);
 }
 
 extern "C" void menu_vk_release(void) {
@@ -1002,18 +1057,26 @@ static void go_to(int tab, const char *key) {
 }
 
 // The game's interface sounds (menu_sound.c) for what the frame did: a press or click on an item, the cursor on another
-// item, another tab by a click (L and R play theirs where they are read). The first frame after opening only records.
+// item, another tab by a click (L, R, Q and E play theirs where they are read: g_tab_sounded). The first frame after
+// opening only records: the open sound has played, and the cursor going to the first row is part of it. g_sound_fresh
+// marks that frame, as the frame count alone does not when nothing was laid out while the menu was closed.
+static bool g_sound_fresh;
+static int g_tab_sounded = -1;   // the tab L / R / Q / E asked for, its sound played
+
 static void menu_sounds_frame(void) {
     ImGuiContext &g = *GImGui;
     static int last_frame = -2, last_tab = -1;
     static ImGuiID last_nav;
-    bool fresh = g.FrameCount != last_frame + 1;
+    bool fresh = g_sound_fresh || g.FrameCount != last_frame + 1;
+    g_sound_fresh = false;
     last_frame = g.FrameCount;
     if (!fresh) {
         if (g.ActiveId && g.ActiveIdIsJustActivated) menu_sound_play(MENU_SOUND_DECIDE);
         else if (g.NavId && g.NavId != last_nav) menu_sound_play(MENU_SOUND_CURSOR);
-        if (g_tab != last_tab && last_tab >= 0) menu_sound_play(g_tab > last_tab ? MENU_SOUND_TAB_RIGHT : MENU_SOUND_TAB_LEFT);
+        if (g_tab != last_tab && last_tab >= 0 && g_tab != g_tab_sounded)
+            menu_sound_play(g_tab > last_tab ? MENU_SOUND_TAB_RIGHT : MENU_SOUND_TAB_LEFT);
     }
+    if (g_tab != last_tab) g_tab_sounded = -1;
     last_nav = g.NavId, last_tab = g_tab;
 }
 
@@ -1029,7 +1092,6 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
                                         ImGuiWindowFlags_NoSavedSettings);
     if (framed) ImGui::PopStyleVar();
     const ImVec2 win_p = ImGui::GetWindowPos(), win_s = ImGui::GetWindowSize();
-    const float inset = 7 * scale;
     // The game's ornamented frame (ui/menu_art.cpp; nothing without the RomFS's), in gold. Its lines lie inside the
     // texture (about 4 % of the width, 7 % of the height in), so the frame is drawn that far outside the window and its
     // lines run along the window's edge, clear of the title and the rows; unclipped, it may reach past the window.
@@ -1056,19 +1118,24 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
         ImGui::SameLine();
         ImGui::TextUnformatted(menu_text(UI_MENU_TITLE));
     }
+    const float title_end = ImGui::GetItemRectMax().x;
     if (g_title_font) ImGui::PopFont();
-    // the port version and the game update, right-aligned on the title line: what a bug report needs first
+    // the port version and the game update, right-aligned on the title line: what a bug report needs first; left out
+    // where it would run into the title (a narrow window, a long title)
     char game[16], version[96];
     snprintf(game, sizeof game, "%d.%d.%d", rt_game_version / 100, rt_game_version / 10 % 10, rt_game_version % 10);
     snprintf(version, sizeof version, "NX2navi %s  -  game %s", rt_port_version, game);
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(version).x);
-    ImGui::TextDisabled("%s", version);
+    float version_x = win_s.x - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(version).x;
+    if (win_p.x + version_x >= title_end + ImGui::GetStyle().ItemSpacing.x * 2) {
+        ImGui::SameLine(version_x);
+        ImGui::TextDisabled("%s", version);
+    }
 
     int step = g_modal || binds_modal()                                                                  ? 0
              : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
              : ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? -1
                                                                                                          : 0;
-    if (step) g_tab_request = (g_tab + step + TAB_COUNT) % TAB_COUNT;
+    if (step) g_tab_request = g_tab_sounded = (g_tab + step + TAB_COUNT) % TAB_COUNT;
     if (step) menu_sound_play(step > 0 ? MENU_SOUND_TAB_RIGHT : MENU_SOUND_TAB_LEFT);
     if (g_tab_request >= 0) g_focus_page = g_tab_request;   // the new page's first row takes the cursor
 
@@ -1121,7 +1188,8 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
     // the save menu's brown buttons, with the game's cursor on the selected one (ui/menu_skin.cpp)
     float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap, y));
+    // right-aligned; in a window too narrow for both, from the left edge
+    ImGui::SetCursorPos(ImVec2(fmaxf(st.WindowPadding.x, ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap), y));
     if (skin_widget_button(cont, ImVec2(bw, 0), scale)) set_open(0);
     ImGui::SameLine(0, gap);
     if (skin_widget_button(quit, ImVec2(bw, 0), scale)) gfx_window_request_close();
@@ -1295,7 +1363,13 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     if (g_perf_save.exchange(0)) cfg_save();
     perf_tick(plat_now_ns(), t);
     amiibo_tick();
+    if (g_booting.load(std::memory_order_relaxed)) g_booting.store(0, std::memory_order_release);   // the game runs
     bool open = g_open.load(std::memory_order_relaxed);
+    // the frame the menu is first laid out after opening: also when its g_reset went to an earlier frame of the overlay
+    // alone (the menu opened between the two loads), the pad's buttons held now must not count as presses
+    static bool was_open;
+    bool opened = open && !was_open;
+    was_open = open;
     if (!open) {
         if (g_save_pending) g_save_pending = opt_save_tick(1);   // closed: the last change goes to nx2navi.ini now
         if (g_test.at && !g_test.opened && frame >= g_test.at) {
@@ -1314,8 +1388,8 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     }
     uint64_t t0 = plat_now_ns();
     if (!g_ctx_ok) make_context();
-    float scale = menu_scale(t->height);
-    if (!vk_up(t) || (g_font_scale != scale && !fonts_up(scale))) {
+    float scale = menu_scale(t->width, t->height);
+    if (!vk_up(t) || !fonts_for(scale, t0)) {
         rt_log("menu: Dear ImGui Vulkan back end set-up failed; the menu stays closed");
         g_failed.store(1);
         set_open(0);
@@ -1330,8 +1404,11 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     ImGuiIO &io = ImGui::GetIO();
     int reset = g_reset.exchange(0);
     if (reset) {
+        io.ClearEventsQueue();   // events handed over before the close and not yet taken (ImGui spreads them over frames)
         io.ClearInputKeys();
         io.ClearInputMouse();
+        binds_cancel();          // a cell waiting for a press when the menu closed: no press binds on the next opening
+        g_sound_fresh = true;
         g_last_ns = 0;
         g_focus_page = g_tab_request >= 0 ? g_tab_request : g_tab;   // opening: the first row has the cursor
         if (GImGui->OpenPopupStack.Size) ImGui::ClosePopupToLevel(0, false);   // a confirmation left open on closing
@@ -1344,7 +1421,7 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     if (!open) {   // the overlay alone: no input reaches ImGui
     } else if (g_test.page < 0) {
         drain_events(io);
-        pad_events(io, reset);
+        pad_events(io, reset || opened);
     } else {   // the test hook's pages: the user's input in a background test window must not change settings
         plat_mutex_lock(&ev_lock);
         ev_n = 0;
@@ -1382,7 +1459,6 @@ extern "C" void menu_boot_set(int phase, long long done, long long total) {
     g_boot_done.store(done, std::memory_order_relaxed);
     g_boot_total.store(total, std::memory_order_relaxed);
     g_boot_phase.store(phase, std::memory_order_release);
-    g_booting.store(phase >= 0, std::memory_order_release);
 }
 
 // A box in the middle of the screen in the menu's look (ui/menu_skin.cpp skin_boot_panel): the title, the step with its
@@ -1390,8 +1466,8 @@ extern "C" void menu_boot_set(int phase, long long done, long long total) {
 extern "C" int menu_boot_frame(const MenuTarget *t) {
     if (g_failed_flag() || g_boot_phase.load(std::memory_order_acquire) < 0) return 0;   // -1: done, a black frame
     if (!g_ctx_ok) make_context();
-    float scale = menu_scale(t->height);
-    if (!vk_up(t) || (g_font_scale != scale && !fonts_up(scale))) {
+    float scale = menu_scale(t->width, t->height);
+    if (!vk_up(t) || !fonts_for(scale, plat_now_ns())) {
         rt_log("menu: Dear ImGui Vulkan back end set-up failed; no boot screen, and the menu stays closed");
         g_failed.store(1);
         return 0;
@@ -1424,7 +1500,7 @@ extern "C" int menu_boot_frame(const MenuTarget *t) {
     ImFont *body = ImGui::GetFont();
     float body_px = ImGui::GetFontSize();
     ImFont *head = g_title_font ? g_title_font : body;
-    float head_px = g_title_font ? g_title_font->FontSize : body_px * 1.2f;
+    float head_px = g_title_font ? g_title_font->FontSize * io.FontGlobalScale : body_px * 1.2f;   // as GetFontSize scales
     float frac = -1;
     if ((phase == 1 || phase == 2) && total > 0) frac = done <= 0 ? 0 : done >= total ? 1 : (float)done / (float)total;
     float s = (float)fmod((now - g_boot_t0) / 1e9 * 0.8, 2.0);
