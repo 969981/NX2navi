@@ -821,6 +821,50 @@ def romfs_index(out, gen):
         fail('the RomFS index could not be written')
 
 
+def windres_command(msys, rco):
+    """MSYS2's windres on nx2navi.rc, run with runtime/ as the working directory (compile_resources says why)."""
+    pp = ('-E', '-xc', '-DRC_INVOKED')   # windres's own preprocessor flags, which --preprocessor replaces
+    return [str(msys / 'bin' / 'windres.exe'), '--use-temp-file', f'--preprocessor={msys / "bin" / "gcc.exe"}',
+            *(f'--preprocessor-arg={a}' for a in pp), '-O', 'coff', '-i', 'nx2navi.rc', '-o', str(rco)]
+
+
+def compile_resources(msys, rt, obj, env):
+    """runtime/nx2navi.rc into obj/nx2navi_rc.o: the manifest of the game's exe (per-monitor DPI awareness, so the
+    picture keeps the monitor's real size rather than one Windows stretches) and its icon.
+
+    windres preprocesses the .rc with gcc through one command line it writes itself, quoting each path that holds a
+    space. By default it hands that line to cmd.exe /c, which drops the first and the last double quote of a line
+    holding more than two: gcc's quoted path loses its opening quote, and under a user folder with a space in its
+    name (C:\\Users\\Ali Sayed) cmd.exe stops at that space ("'C:\\Users\\Ali' is not recognized").
+
+    With --use-temp-file windres starts gcc itself instead, no shell involved: it splits the line into arguments and
+    passes each one to gcc intact. Its splitter reads a quoted first word right, but it cuts a quoted -I path at its
+    spaces and reads past the end of the line after a quoted last word, so the line holds no path but gcc's, its
+    first word: the .rc goes by its bare name from runtime/ as the working directory, where windres also finds the
+    manifest and the icon, and there is no -I. windres's temporary files go to a folder of the build cache, deleted
+    afterwards (it leaves two of them behind on every run).
+
+    The object is written under another name and replaces the old one only when its bytes differ, so an unchanged
+    resource keeps its time and does not make the link key change (a rebuild with nothing new does not link again)."""
+    rco, new = obj / 'nx2navi_rc.o', obj / 'nx2navi_rc.o.new'
+    tmp = obj / 'windres-tmp'
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir()
+    try:
+        r = subprocess.run(windres_command(msys, new), cwd=rt, env=dict(env, TMP=str(tmp), TEMP=str(tmp)),
+                           capture_output=True, text=True, errors='replace')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if r.returncode:
+        new.unlink(missing_ok=True)
+        fail(f'windres failed on runtime/nx2navi.rc: {r.stderr.strip()[:400]}')
+    if rco.is_file() and rco.read_bytes() == new.read_bytes():
+        new.unlink()
+    else:
+        os.replace(new, rco)
+    return rco
+
+
 def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
     """romfs_job: the RomFS step still running beside this one (a first build). Everything that does not include
     romfs_config.h compiles meanwhile; the RomFS index and the few files that include it follow once it is done."""
@@ -888,13 +932,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
             print(f'--- {src}\n{err}', file=sys.stderr)
         fail(f'{len(bad)} files did not compile')
 
-    # the manifest (per-monitor DPI awareness: the picture at the monitor's real size, not one Windows stretches) and the
-    # icon, runtime/nx2navi.rc through MSYS2's windres
-    rco = obj / 'nx2navi_rc.o'
-    r = subprocess.run([str(msys / 'bin' / 'windres.exe'), '-I', str(rt), '-O', 'coff', '-i', str(rt / 'nx2navi.rc'),
-                        '-o', str(rco)], capture_output=True, text=True, env=env, errors='replace')
-    if r.returncode:
-        fail(f'windres failed on runtime/nx2navi.rc: {r.stderr.strip()[:400]}')
+    rco = compile_resources(msys, rt, obj, env)
     objs = [o for _, o in srcs] + [rco]
     exe = out / EXE_NAME
     rsp = cache_dir / 'link.rsp'

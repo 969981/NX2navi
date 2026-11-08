@@ -195,8 +195,9 @@ local fake repository, resumed and checked downloads, the GitHub and URL feeds, 
 pruning, unsafe archives, the font decoding on a system font wrapped like the game's, `make_game.py` on a synthetic
 `.nup` (events, skipped steps, `--rebuild` without the dump, step keys), the RomFS step beside the lift and compile
 and its failure stopping the build, the compile step's object cache with the system's C compiler and its
-largest-first order, CLANG64's clang in the lock and the install, the save import (the account folder, the save
-folders it recognises, backup, the commit journal, the saves folder, refusals), the install job with a fake
+largest-first order, its windres call under folders with spaces in their names, CLANG64's clang in the lock and the
+install, the save import (the account folder, the save folders it recognises, backup, the commit journal, the saves
+folder, refusals), the install job with a fake
 `make_game.py`, and the window's selftest when a display is there.
 
 ## Requirements and limits

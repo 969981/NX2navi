@@ -9,7 +9,8 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
 - updater: staging a release, switching, rollback, pruning, refusing unsafe archives
 - gamefiles: the .bfotf font wrapping and zstd dictionaries, on a font of this system made into a fake RomFS
 - make_game.py: a synthetic .nup through the check, exefs and romfs steps with --events, skipped steps on a second
-  run, --rebuild without the game files, and the object cache of the compile step with the system's C compiler
+  run, --rebuild without the game files, the object cache of the compile step with the system's C compiler, and its
+  windres call under folders with spaces (a script in windres's place)
 - jobs: an install driven by a fake make_game.py
 - the window: --selftest draws every screen (skipped without a display)
 """
@@ -550,6 +551,26 @@ def _nest(flat):
     return tree
 
 
+# Stands in for windres.exe: records its arguments, working directory and temporary folder, opens the .rc and the
+# files it names from the working directory as windres does, and leaves two temporary files behind as windres does.
+FAKE_WINDRES = r'''
+import json, os, re, sys
+from pathlib import Path
+a = sys.argv[1:]
+tmp = os.environ['TMP']
+for n in ('cc1', 'cc2'):
+    open(os.path.join(tmp, n), 'w').close()
+Path(__file__).with_suffix('.json').write_text(json.dumps(
+    {'argv': a, 'cwd': os.getcwd(), 'tmp': tmp, 'temp': os.environ['TEMP']}))
+if os.environ.get('FAKE_WINDRES_FAIL'):
+    sys.exit('windres: preprocessing failed.')
+text = open(a[a.index('-i') + 1]).read()
+for name in re.findall(r'^\s*\w+\s+\w+\s+"([^"]+)"', text, re.M):
+    open(name, 'rb').close()
+open(a[a.index('-o') + 1], 'wb').write(b'coff')
+'''
+
+
 class MakeGameTest(Tmp):
     def setUp(self):
         super().setUp()
@@ -761,6 +782,48 @@ class MakeGameTest(Tmp):
         compiled, reused, bad = go()
         self.assertEqual((compiled, len(bad)), (1, 1))
         self.assertNotIn('b.o', json.loads((obj / 'objects.json').read_text()))
+
+    @unittest.skipIf(os.name == 'nt', 'a script stands in for windres.exe')
+    def test_compile_resources(self):
+        # The toolchain, the kit and the game under folders with spaces, as under C:\Users\Ali Sayed. windres must
+        # start gcc itself (--use-temp-file) on a line that names no path but gcc's: the .rc by its bare name from
+        # runtime/, no -I, -D or -U.
+        msys, obj = self.tmp / 'tool chain' / 'ucrt64', self.out / 'build-cache' / 'obj'
+        windres = msys / 'bin' / 'windres.exe'
+        windres.parent.mkdir(parents=True)
+        windres.write_text(f'#!{sys.executable}\n' + FAKE_WINDRES)
+        windres.chmod(0o755)
+        obj.mkdir(parents=True)
+        rt = self.tmp / 'the kit' / 'runtime'
+        rt.mkdir(parents=True)
+        for name in ('nx2navi.rc', 'nx2navi.manifest', 'nx2navi.ico'):
+            shutil.copy2(ROOT / 'runtime' / name, rt / name)
+        rco = self.mg.compile_resources(msys, rt, obj, dict(os.environ))
+        self.assertEqual((rco, rco.read_bytes()), (obj / 'nx2navi_rc.o', b'coff'))
+        seen = json.loads(windres.with_suffix('.json').read_text())
+        args = seen['argv']
+        self.assertEqual(seen['cwd'], str(rt))
+        self.assertIn('--use-temp-file', args)
+        self.assertIn(f'--preprocessor={msys / "bin" / "gcc.exe"}', args)
+        self.assertEqual([a for a in args if a.startswith('--preprocessor-arg=')],
+                         ['--preprocessor-arg=-E', '--preprocessor-arg=-xc', '--preprocessor-arg=-DRC_INVOKED'])
+        self.assertEqual(args[args.index('-i') + 1], 'nx2navi.rc')
+        self.assertFalse([a for a in args if a.startswith(('-I', '--include-dir', '-D', '-U'))])
+        # the temporary files went to a folder of the build cache, which is gone with the two windres left there
+        self.assertEqual(seen['tmp'], seen['temp'])
+        self.assertEqual(Path(seen['tmp']).parent, obj)
+        self.assertEqual(sorted(p.name for p in obj.iterdir()), ['nx2navi_rc.o'])
+        # the same resource again: the object keeps its time, so the link key does not change and nothing relinks
+        before = rco.stat().st_mtime_ns
+        time.sleep(0.02)
+        self.mg.compile_resources(msys, rt, obj, dict(os.environ))
+        self.assertEqual(rco.stat().st_mtime_ns, before)
+        # a failing windres stops the build with its message
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            self.mg.compile_resources(msys, rt, obj, dict(os.environ, FAKE_WINDRES_FAIL='1'))
+        self.assertIn('windres failed on runtime/nx2navi.rc: windres: preprocessing failed.', err.getvalue())
+        self.assertEqual(sorted(p.name for p in obj.iterdir()), ['nx2navi_rc.o'])
 
 
 # ---------------------------------------------------------------- jobs
