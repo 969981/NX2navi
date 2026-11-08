@@ -4,7 +4,8 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
 
 - versions, settings
 - toolchain: the package database, dependency resolution and an install from a local fake repository
-- net: downloads that resume, check their sha256 and stop on cancel
+- net: downloads that resume, check their sha256 and stop on cancel; the certificate checks against a local HTTPS
+  server with certificates the openssl command makes (an expired one, an unknown one), the clock comparison
 - feed: GitHub releases (stable, preview, private with a token) and a plain manifest URL, served locally
 - updater: staging a release, switching, rollback, pruning, refusing unsafe archives
 - gamefiles: the .bfotf font wrapping and zstd dictionaries, on a font of this system made into a fake RomFS
@@ -21,6 +22,7 @@ import io
 import json
 import os
 import shutil
+import ssl
 import struct
 import subprocess
 import sys
@@ -49,9 +51,11 @@ except ImportError:
 # ---------------------------------------------------------------- helpers
 
 class Server:
-    """A local HTTP server for a folder, with extra routes (path -> (status, headers, body)) and Range support."""
+    """A local HTTP server for a folder, with extra routes (path -> (status, headers, body)) and Range support; HTTPS
+    with cert (a PEM file holding the certificate and its key). HEAD answers a redirect to https, as a server that
+    serves only HTTPS does."""
 
-    def __init__(self, folder, routes=None):
+    def __init__(self, folder, routes=None, cert=None):
         folder, routes = Path(folder), routes if routes is not None else {}
         self.hits = []
         server = self
@@ -59,6 +63,13 @@ class Server:
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
+
+            def do_HEAD(self):
+                server.hits.append((self.path, dict(self.headers)))
+                self.send_response(301)
+                self.send_header('Location', 'https://127.0.0.1' + self.path)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
 
             def do_GET(self):
                 server.hits.append((self.path, dict(self.headers)))
@@ -96,14 +107,63 @@ class Server:
 
         self.httpd = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
         self.url = f'http://127.0.0.1:{self.httpd.server_address[1]}/'
+        if cert:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert)
+            self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True)
+            self.url = 'https' + self.url[4:]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
     def close(self):
         self.httpd.shutdown()
+        self.httpd.server_close()
 
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def make_cert(folder, start, end):
+    """A self-signed certificate for 127.0.0.1 valid from start to end (epoch seconds), with its key, as one PEM file
+    in the new folder; made by the openssl command (its ca command takes any dates, its req command none in the
+    past)."""
+    folder = Path(folder)
+    folder.mkdir(parents=True)
+    (folder / 'index.txt').write_text('')
+    (folder / 'serial.txt').write_text('01\n')
+    (folder / 'ca.cnf').write_text('[ca]\ndefault_ca = d\n[d]\ndatabase = index.txt\nserial = serial.txt\n'
+                                   'new_certs_dir = .\ndefault_md = sha256\npolicy = p\ncopy_extensions = copy\n'
+                                   'unique_subject = no\n[p]\ncommonName = supplied\n')
+    def stamp(t):
+        return time.strftime('%Y%m%d%H%M%SZ', time.gmtime(t))
+
+    def run(*args):
+        subprocess.run(['openssl', *args], cwd=folder, check=True, capture_output=True)
+
+    run('req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', 'key.pem',
+        '-out', 'req.csr', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1')
+    run('ca', '-batch', '-config', 'ca.cnf', '-selfsign', '-keyfile', 'key.pem', '-in', 'req.csr', '-out', 'cert.pem',
+        '-startdate', stamp(start), '-enddate', stamp(end), '-notext')
+    pem = folder / 'both.pem'
+    pem.write_bytes((folder / 'cert.pem').read_bytes() + (folder / 'key.pem').read_bytes())
+    return pem
+
+
+class CountingContext(ssl.SSLContext):
+    """A client SSLContext that counts its handshakes."""
+
+    def wrap_socket(self, *args, **kwargs):
+        self.handshakes = getattr(self, 'handshakes', 0) + 1
+        return super().wrap_socket(*args, **kwargs)
+
+
+def client_context(trust=None):
+    ctx = CountingContext(ssl.PROTOCOL_TLS_CLIENT)
+    if trust:
+        ctx.load_verify_locations(cafile=trust)
+    else:
+        ctx.load_default_certs()
+    return ctx
 
 
 def tar_bytes(files, compress=True):
@@ -306,6 +366,79 @@ class NetTest(Tmp):
             net.download(srv.url + 'f.bin', self.tmp / 'out' / 'h.bin', cancel=lambda: True)
         with self.assertRaises(net.DownloadError):
             net.download(srv.url + 'missing.bin', self.tmp / 'out' / 'm.bin')
+
+    def test_server_clock(self):
+        srv = Server(self.tmp)
+        self.addCleanup(srv.close)
+        t = net.server_clock(srv.url)          # the Date of the redirect to https, which is not followed
+        self.assertIsNotNone(t)
+        self.assertLess(abs(t - time.time()), 5)
+        self.assertEqual([h[0] for h in srv.hits], ['/'])
+        srv.close()
+        self.assertIsNone(net.server_clock(srv.url, timeout=2))
+
+
+@unittest.skipUnless(shutil.which('openssl'), 'needs the openssl command')
+class CertificateTest(Tmp):
+    def setUp(self):
+        super().setUp()
+        saved = net._CHECKS, dict(net._ACCEPTED), net.server_clock
+        self.addCleanup(lambda: setattr(net, '_CHECKS', saved[0]) or setattr(net, '_ACCEPTED', saved[1]) or
+                        setattr(net, 'server_clock', saved[2]))
+        net._ACCEPTED = {}
+        self.data = os.urandom(100_000)
+        (self.tmp / 'f.bin').write_bytes(self.data)
+
+    def serve(self, start, end):
+        cert = make_cert(self.tmp / f'cert{start}', start, end)
+        srv = Server(self.tmp, cert=cert)
+        self.addCleanup(srv.close)
+        return srv, cert
+
+    def test_refused_certificate(self):
+        """An expired certificate in the trust store: the player's 'certificate has expired', at once, not retried,
+        with the advice the server's clock calls for."""
+        now = time.time()
+        srv, cert = self.serve(now - 400 * 86400, now - 300 * 86400)
+        check = client_context(trust=cert)
+        net._CHECKS = [("Python's check", check)]
+        asked = []
+        cases = ((now + 400 * 86400, "This PC's clock reads"), (now - 3 * 86400, 'set the date, time and time zone'),
+                 (now + 60, "This PC's clock agrees with 127.0.0.1's. Security software"),
+                 (None, "Check that this PC's date, time and time zone are right"))
+        for i, (theirs, says) in enumerate(cases):
+            net.server_clock = lambda url, timeout=10, version='dev', t=theirs: asked.append(url) or t
+            t0 = time.time()
+            with self.assertRaises(net.CertificateError) as cm:
+                net.download(srv.url + 'f.bin', self.tmp / 'out' / 'f.bin', sha256=sha(self.data))
+            self.assertLess(time.time() - t0, 5)                 # no retries: the answer would be the same
+            msg = str(cm.exception)
+            self.assertIn("the certificate of 127.0.0.1 was not accepted (Python's check: certificate has expired)",
+                          msg)
+            self.assertIn(says, msg)
+            self.assertEqual(check.handshakes, i + 1)
+        self.assertEqual(asked, ['http://127.0.0.1/'] * len(cases))   # the clock is asked over plain HTTP
+        self.assertEqual(srv.hits, [])                            # no request got through
+        self.assertFalse((self.tmp / 'out' / 'f.bin.part').exists())
+
+    def test_second_check_accepts(self):
+        """A certificate the first check refuses and the second accepts downloads, and the second goes first for that
+        host from then on."""
+        now = time.time()
+        srv, cert = self.serve(now - 86400, now + 2 * 86400)
+        refuses, accepts = client_context(), client_context(trust=cert)
+        net._CHECKS = [("Python's check", refuses), ("Windows' check", accepts)]
+        dest = net.download(srv.url + 'f.bin', self.tmp / 'out' / 'f.bin', sha256=sha(self.data))
+        self.assertEqual(dest.read_bytes(), self.data)
+        self.assertEqual((refuses.handshakes, accepts.handshakes), (1, 1))
+        self.assertEqual(net._ACCEPTED, {'127.0.0.1': 1})
+        self.assertEqual(net.get_bytes(srv.url + 'f.bin'), self.data)
+        self.assertEqual((refuses.handshakes, accepts.handshakes), (1, 2))
+        net._CHECKS = [("Python's check", refuses)]
+        net.server_clock = lambda *a, **k: None
+        with self.assertRaises(net.CertificateError) as cm:
+            net.get_bytes(srv.url + 'f.bin')
+        self.assertIn("(Python's check: self-signed certificate)", str(cm.exception))
 
 
 # ---------------------------------------------------------------- feed and updater

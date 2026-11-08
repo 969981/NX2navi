@@ -51,7 +51,7 @@ for updates); an XInput gamepad (d-pad or left stick, A, B, Y).
 
 ```
 NX2navi.exe              launcher/native/nx2navi.c: swaps in a staged Python, starts app\<current>\launcher\start.pyw
-python/                  python.org's embeddable Python 3.14.9 with tkinter, numpy, lz4 and zstandard
+python/                  python.org's embeddable Python 3.14.9 with tkinter, numpy, lz4, zstandard and truststore
 app/current.txt          the version the stub starts; app/previous.txt the one before it
 app/<version>/           launcher/, runtime/, recomp/, tools/, bin/nx2navi_xlate.exe, VERSION,
                          toolchain.lock.json (the pinned build tools), feed.json (where updates come from)
@@ -151,6 +151,17 @@ it never ran). The import copies the save the game would load now (a finished co
 `profile/save-tx`, so the game loads the imported save. A save taken from the saves folder moves to
 `saves/imported <date time>`. It refuses while the game runs.
 
+## Downloads
+
+Every download (`launcher/net.py`) comes over HTTPS and is checked against a sha256. A server's certificate is checked
+first by Python's OpenSSL against the certificates in Windows' stores and, when that refuses it, by Windows' own
+certificate check (the truststore package of the bundled Python; not under Wine, whose crypt32 passes a chain that
+stops at an issuer it does not know). OpenSSL sees only the roots the PC already holds, and it takes an expired
+cross-signature still in a store before the server's valid one ("certificate has expired" on a valid chain); Windows
+weighs every chain as its own programs do and downloads a missing root from Windows Update. A certificate both refuse
+stops the step with what each check said, the PC's clock against the server's (the Date of a plain-HTTP request to
+it), and what to check: the date, time and time zone, or security software that scans encrypted connections.
+
 ## Uninstalling
 
 Settings > Uninstall NX2navi, or Settings > Apps > NX2navi (which runs `NX2navi.exe --uninstall`): the launcher
@@ -191,7 +202,8 @@ repository keeps old package files, so a release keeps building with the compile
 ## Tests
 
 `python tests/launcher_test.py` (Python 3.14): versions, settings, the toolchain resolver and installer against a
-local fake repository, resumed and checked downloads, the GitHub and URL feeds, staging, switching, rollback and
+local fake repository, resumed and checked downloads, the certificate checks against a local HTTPS server (its
+certificates made with the `openssl` command), the GitHub and URL feeds, staging, switching, rollback and
 pruning, unsafe archives, the font decoding on a system font wrapped like the game's, `make_game.py` on a synthetic
 `.nup` (events, skipped steps, `--rebuild` without the dump, step keys), the RomFS step beside the lift and compile
 and its failure stopping the build, the compile step's object cache with the system's C compiler and its
