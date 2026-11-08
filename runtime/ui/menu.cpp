@@ -870,11 +870,29 @@ static void row_framegen(void) {
     int cur = !strcmp(v, "fsr3") ? 1 : !strcmp(v, "dlss") ? 2 : 0;
     // NVIDIA DLSS (vk_dlssg.c) is listed only while it is set: Streamline now starts and takes the swapchain, but presents
     // no generated frames yet (one presented per frame, status OK)
+#ifdef _WIN32
     int n = cur == 2 ? 3 : 2;
+#else
+    int n = dlss || cur == 2 ? 3 : 2;   // DLSS Frame Generation through NGX (gfx_present.c ng_*) generates frames here
+#endif
+#ifdef _WIN32
+    const char *fg_note = menu_text(dlss ? UI_MENU_FRAMEGEN_NOTE : UI_MENU_FRAMEGEN_NOTE_FSR);
+#else
+    const char *fg_note = menu_text(UI_MENU_FRAMEGEN_NOTE_LIVE);   // live through NGX here
+#endif
     int nv = opt_choice_index("NX2NAVI_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, cur, 0,
-                              dlss ? UI_MENU_FRAMEGEN_DESC : UI_MENU_FRAMEGEN_DESC_FSR,
-                              menu_text(dlss ? UI_MENU_FRAMEGEN_NOTE : UI_MENU_FRAMEGEN_NOTE_FSR));
+                              dlss ? UI_MENU_FRAMEGEN_DESC : UI_MENU_FRAMEGEN_DESC_FSR, fg_note);
     if (nv >= 0 && nv < n) opt_apply("NX2NAVI_FRAMEGEN", values[nv]);
+    if (cur == 2) {   // the multiplier, live (cfg.c FG_MULT)
+        static const char *const mv[] = {"2", "3", "4", "5", "6", "dynamic"};
+        static const char *const mn[] = {"2x", "3x", "4x", "5x", "6x", "Dynamic"};
+        const char *m = cfg_value("NX2NAVI_FG_MULT");
+        int mc = 0;
+        for (int i = 0; i < 6; i++)
+            if (!strcmp(m, mv[i])) mc = i;
+        int sel = opt_choice_index("NX2NAVI_FG_MULT", UI_MENU_FG_MULT, mn, 6, mc, 0, UI_MENU_FG_MULT_DESC);
+        if (sel >= 0 && sel < 6) opt_apply("NX2NAVI_FG_MULT", mv[sel]);
+    }
 }
 
 // The picture's height (widescreen.c picture_height): the game's 1440 or more.

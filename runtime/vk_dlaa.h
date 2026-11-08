@@ -8,6 +8,15 @@
 #define DLAA_SCENE_MIN_W 320u
 
 int vk_dlaa_wanted(void);   // the setting is on (the device may still lack DLSS)
+// DLSS Frame Generation through NGX (vk_dlaa.c, gfx_present.c's presenter): NX2NAVI_FRAMEGEN = dlss without Streamline.
+typedef struct { VkImage img; VkImageView view; VkFormat fmt; uint32_t w, h; } VkNgxImage;   // in GENERAL
+int vk_ngxfg_wanted(void);   // the setting asks for it (read once)
+int vk_ngxfg_max(void);      // generated frames per rendered one the GPU allows (1 = 2x, 5 = 6x), 0 when unavailable
+int vk_ngxfg_on(void);       // ... and NX2NAVI_FRAMEGEN = dlss now (the menu switches it live)
+void vk_ngxfg_reset(void);   // the next generation starts without history (a resize, the menu)
+// Records `count` generated frames into out[] and a copy of bb into real; returns how many were made (0: present bb alone).
+int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage *hudless, const VkNgxImage *out, int count,
+                      const VkNgxImage *real);
 int vk_dlaa_fsr3(void);
 // Frame generation (vk_fg.cpp): the depth and motion vectors of the frame DLSS or FSR 3.1 last ran on, with its jitter
 // and whether its history reset; 1 once per evaluation (0: none since the last call). The images stay valid until the
