@@ -1,10 +1,13 @@
-"""PlayStation (DualSense) button prompts for Ocarina of Time (Switch 2, game 1.1.1): a RomFS overlay folder for
-runtime/romfs.c overlay_init (prompts = playstation), drawn on the player's machine from the game's own files.
+"""PlayStation (DualSense) and Steam Deck button prompts for Ocarina of Time (Switch 2, game 1.1.1): a RomFS overlay
+folder for runtime/romfs.c overlay_init (prompts = playstation or steamdeck), drawn on the player's machine from the
+game's own files.
 
 Ocarina draws its prompts as text in its button font, Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs: a zstd frame
 (with a dictionary of Pack/ZsDic.pack.zs) holding a .bfotf (tools/button_icons.py bfotf_decode) whose private-use code
 points from U+E040 are the buttons in TotK's order: A B X Y, L R ZL ZR, d-pad, Home, Plus, Minus, then the sticks and
-the d-pad's directions. This tool redraws them as a DualSense names them:
+the d-pad's directions. This tool redraws them as a DualSense or a Steam Deck names them.
+
+PlayStation:
 
 - the face buttons: Cross, Circle, Square and Triangle, as filled discs with the symbol cut out. Which Switch button
   shows which symbol follows the pad layout (runtime/input_map.c), as the Xbox prompts do:
@@ -14,7 +17,14 @@ the d-pad's directions. This tool redraws them as a DualSense names them:
     is on Cross, B on Circle, X on Square and Y on Triangle.
 - L R ZL ZR as L1 R1 L2 R2 (the labels cut in ClarimoUDPE-DemiBold, one of the game's text fonts), Plus as Options
   (three bars), Minus as Create, and the d-pad as a cross with the meant directions lit.
-The sticks, Home and the console keep the game's glyphs.
+
+Steam Deck (its buttons are labelled as an Xbox pad's, A at the bottom):
+- the face buttons keep the game's A B X Y discs. --style steamdeck, for pad_layout = nintendo, swaps their glyphs (A
+  with B, X with Y), as the right button that does Switch A is labelled B; --style steamdeck-label, for xbox and auto,
+  keeps them.
+- L R ZL ZR as L1 R1 L2 R2, Plus as Menu (three bars), Minus as View (two windows), the d-pad as a cross.
+
+In every style the sticks, Home and the console keep the game's glyphs.
 
 The font grows by a few hundred bytes, more than its entry of the resource size table
 (System/Resource/ResourceSizeTable.Product.111...rsizetable.zs) leaves room for, so that table goes into the overlay
@@ -48,12 +58,15 @@ FONT = 'Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs'
 TEXT_FONT = 'Font2/Scalable/ClarimoUDPE-DemiBold.Nin_Ounce_NVN2.bfotf.zs'
 RESTBL = 'System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs'
 DICTIONARIES = 'Pack/ZsDic.pack.zs'
-STYLES = ('playstation', 'playstation-label')
+STYLES = ('playstation', 'playstation-label', 'steamdeck', 'steamdeck-label')
 # Switch face button -> DualSense symbol, per style (the module docstring).
 FACES = {
     'playstation': {0xE040: 'circle', 0xE041: 'cross', 0xE042: 'triangle', 0xE043: 'square'},
     'playstation-label': {0xE040: 'cross', 0xE041: 'circle', 0xE042: 'square', 0xE043: 'triangle'},
+    'steamdeck': {}, 'steamdeck-label': {},   # the game's own letters
 }
+# Face glyphs that trade places, per style: the Steam Deck under the Nintendo layout names A as B and X as Y.
+SWAPS = {'steamdeck': ((0xE040, 0xE041), (0xE042, 0xE043))}
 
 
 class RomFS:
@@ -167,8 +180,9 @@ def icons(style, g, adv):
 
     out.update({0xE044: shoulder('L1', False, 0xE044), 0xE045: shoulder('R1', False, 0xE045),
                 0xE046: shoulder('L2', True, 0xE046), 0xE047: shoulder('R2', True, 0xE047)})
-    out[0xE04B] = base[0xE04B]   # Options: the three bars of the Xbox Menu icon
-    out[0xE04C] = create_button(adv[0xE04C])
+    out[0xE04B] = base[0xE04B]   # Options (DualSense) or Menu (Steam Deck): three bars
+    # Minus: Create on a DualSense, View (two windows) on a Steam Deck
+    out[0xE04C] = base[0xE04C] if style.startswith('steamdeck') else create_button(adv[0xE04C])
     for cp in (0xE049, 0xE060, 0xE061, 0xE062, 0xE063, 0xE064, 0xE065):
         out[cp] = base[cp]
     return out
@@ -182,7 +196,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--romfs', type=Path, required=True, help='the folder with romfs.bin and index.json')
     ap.add_argument('--out', type=Path, required=True, help='the overlay folder to write')
-    ap.add_argument('--style', choices=STYLES, default='playstation', help='which Switch face button shows which symbol')
+    ap.add_argument('--style', choices=STYLES, default='playstation',
+                    help='the controller, and with -label the face buttons by label (pad_layout = xbox or auto)')
     args = ap.parse_args()
 
     romfs = RomFS(args.romfs)
@@ -190,7 +205,7 @@ def main():
     otf, key = bi.bfotf_decode(font_bfotf)
     text = TTFont(io.BytesIO(bi.bfotf_decode(romfs.read(TEXT_FONT)[0])[0]))
     adv = bi.font_advances(font_bfotf)
-    new_otf = bi.redraw_font(otf, icons(args.style, bi.Glyphs([text]), adv))
+    new_otf = bi.redraw_font(otf, icons(args.style, bi.Glyphs([text]), adv), SWAPS.get(args.style, ()))
     new_bfotf = bi.bfotf_encode(new_otf, key, font_bfotf)
     table, table_dict = romfs.read(RESTBL)
     grown = len(new_bfotf) - len(font_bfotf)

@@ -15,8 +15,8 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
   4. lift     recomp/gen.py with recomp/patches-v111.txt -> <out>/build-cache/lift, plus the two SDK bring-up fixes
   5. compile  the lifted C and runtime/ with MSYS2's clang, linked into <out>/ocarina.exe; the MSYS2 DLLs it loads,
               the shader translator and romfs-index.bin beside it
-  6. prompts  the PlayStation button prompts (tools/ocarina_prompts.py) -> <out>/romfs-patches-playstation and
-              romfs-patches-playstation-label, for prompts = playstation; skipped with a note when fontTools is missing
+  6. prompts  the PlayStation and Steam Deck button prompts (tools/ocarina_prompts.py) -> <out>/romfs-patches-
+              playstation(-label) and romfs-patches-steamdeck(-label); skipped with a note when fontTools is missing
   7. shaders  every shader in the game files (tools/prepare_shaders.py, default bind state) translated, and each one's
               GPU driver build done once, so play does not stop to compile them (`ocarina.exe --prepare-shaders`)
 
@@ -978,23 +978,23 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
 
 # ---------------------------------------------------------------- main
 
-PROMPT_STYLES = ('playstation', 'playstation-label')
+PROMPT_STYLES = ('playstation', 'playstation-label', 'steamdeck', 'steamdeck-label')
 
 
 def step_prompts(out):
-    """The PlayStation prompts' overlay folders from the RomFS image (tools/ocarina_prompts.py). Optional: without
-    fontTools the step says so and the game keeps its own prompts, as it does with prompts = nintendo."""
+    """The PlayStation and Steam Deck prompts' overlay folders from the RomFS image (tools/ocarina_prompts.py).
+    Optional: without fontTools the step says so and the game keeps its own prompts, as with prompts = nintendo."""
     try:
         import fontTools  # noqa: F401
         import compression.zstd  # noqa: F401
     except ImportError as e:
-        say(f'  skipped: {e.name} is missing (pip install fonttools; Python 3.14), so prompts = playstation keeps the '
-            'Switch prompts')
+        say(f'  skipped: {e.name} is missing (pip install fonttools; Python 3.14), so prompts = playstation or '
+            'steamdeck keeps the Switch prompts')
         return
     for style in PROMPT_STYLES:
         if subprocess.run(py_cmd(KIT / 'tools' / 'ocarina_prompts.py', '--romfs', out / 'romfs', '--style', style,
                                  '--out', out / f'romfs-patches-{style}')).returncode:
-            fail('the PlayStation prompts could not be written (see above)')
+            fail('the button prompts could not be written (see above)')
 
 
 def step_shaders(out):

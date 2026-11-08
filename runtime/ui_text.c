@@ -232,11 +232,13 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                              "at start, so they change after a restart. They are part of the game's files, so a button "
                              "you remap in Controls keeps its old prompt on screen.",
     [UI_MENU_PROMPTS_NINTENDO] = "Nintendo", [UI_MENU_PROMPTS_XBOX] = "Xbox", [UI_MENU_PROMPTS_PC] = "PC",
-    [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
+    [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation", [UI_MENU_PROMPTS_STEAMDECK] = "Steam Deck",
     [UI_MENU_PROMPTS_PS_DESC] = "Which controller's buttons the game's prompts show. Nintendo: the game's own. "
                                 "PlayStation: Cross, Circle, Square and Triangle, L1, R1, L2, R2, Options, Create and a "
-                                "d-pad cross. Which symbol stands for A follows the layout above: with Nintendo (A right) "
-                                "the prompts for A show Circle, with Automatic or Xbox (A bottom) they show Cross. The "
+                                "d-pad cross. Steam Deck: A, B, X and Y as labelled, L1, R1, L2, R2, Menu, View and a "
+                                "d-pad cross. The face buttons follow the layout above: with Nintendo (A right) the "
+                                "prompts for A show Circle or B (the right button), with Automatic or Xbox (A bottom) "
+                                "Cross or A. The "
                                 "game reads its prompts at start, so they change after a restart. They are part of the "
                                 "game's files, so a button you remap in Controls keeps its old prompt on screen.",
     [UI_MENU_PROMPTS_MISSING] = "prompt files missing: run the setup again",
