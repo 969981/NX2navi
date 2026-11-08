@@ -564,6 +564,39 @@ class MakeGameTest(Tmp):
         self.assertEqual(code, 1)
         self.assertTrue(any(e['ev'] == 'error' and '1.1.1' in e['message'] for e in ev))
 
+    @unittest.skipUnless(shutil.which('cc'), 'needs a C compiler')
+    def test_object_cache_survives_a_moved_kit(self):
+        """The launcher keeps each version in its own folder: a kit at a new place reuses every object."""
+        kits = []
+        for name in ('0.3.10', '0.3.11'):
+            kit = self.tmp / 'app' / name / 'runtime'
+            kit.mkdir(parents=True)
+            (kit / 'h.h').write_text('#define V 1\n')
+            (kit / 'a.c').write_text('#include "h.h"\nint a(void) { return V; }\n')
+            kits.append(kit.parent)
+        obj = self.tmp / 'obj'
+        obj.mkdir()
+
+        def go(kit):
+            rt = kit / 'runtime'
+            srcs = [(rt / 'a.c', obj / 'rt_a.o')]
+            cache = self.mg.ObjectCache(obj / 'objects.json', {'<kit>': kit})
+            return self.mg.compile_all(srcs, lambda s_, d: ['cc', '-c', '-I', str(rt), '-o', str(d), str(s_)], cache,
+                                       1, dict(os.environ), salt='cc')
+        self.assertEqual(go(kits[0])[:2], (1, 0))
+        self.assertEqual(go(kits[1])[:2], (0, 1))
+        (kits[1] / 'runtime' / 'h.h').write_text('#define V 2\n')        # the new version changed the header
+        self.assertEqual(go(kits[1])[:2], (1, 0))
+
+    def test_runtime_split(self):
+        tainted = self.mg.per_install_names()
+        self.assertTrue({'layout.h', 'patches.h', 'romfs_config.h'} <= tainted)
+        names = {p.name: self.mg.per_install(p, tainted) for p, _ in self.mg.runtime_sources()}
+        for f in ('loader.c', 'memory.c', 'romfs.c', 'patches.c'):
+            self.assertTrue(names[f], f)
+        self.assertFalse(names['vk_device.c'])
+        self.assertLess(sum(names.values()), len(names) // 4)          # most of the runtime can come prebuilt
+
     def test_parse_deps(self):
         text = 'C:/o/x.o: C:/src/x.c C:/inc/a\\ b.h \\\n  C:/inc/c.h\n'
         self.assertEqual(self.mg.parse_deps(text), ['C:/src/x.c', 'C:/inc/a b.h', 'C:/inc/c.h'])
@@ -648,6 +681,26 @@ class JobTest(Tmp):
         self.assertEqual(j.result, 'failed')
         self.assertIn('1.1.1', j.error)
         self.assertEqual(j.step('check').state, jobs.FAILED)
+
+
+# ---------------------------------------------------------------- the icon
+
+class IconTest(unittest.TestCase):
+    def test_navi(self):
+        try:
+            from launcher.ui import art
+        except ImportError:
+            self.skipTest('needs numpy')
+        self.assertEqual(art.navi(2).shape, (42, 44, 4))
+        data = art.navi_ico()
+        count = struct.unpack_from('<H', data, 4)[0]
+        sizes = [data[6 + 16 * i] or 256 for i in range(count)]
+        self.assertEqual(sizes[0], 16)
+        self.assertIn(256, sizes)
+        off = struct.unpack_from('<I', data, 6 + 12)[0]
+        self.assertEqual(struct.unpack_from('<Iii', data, off), (40, 16, 32))   # a bitmap entry, not PNG
+        big = struct.unpack_from('<I', data, 6 + 16 * (count - 1) + 12)[0]
+        self.assertEqual(data[big:big + 4], b'\x89PNG')
 
 
 # ---------------------------------------------------------------- the window

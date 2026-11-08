@@ -23,15 +23,18 @@ game. Saves and settings are never touched.
 
 ## Look
 
-The window follows the game's options menu, with colours sampled from it: a wooden title band with the Triforce and
-the name, bronze label cells, dark value cells, orange On/Off choices, a white glowing cursor around the selected
+The window follows the game's options menu, with colours sampled from it: a wooden band across the whole top with
+Navi and the name, which is also the window's title bar (no system title bar: drag the band to move the window,
+minimise and close sit at its right end, Alt+F4 closes), bronze label cells, dark value cells, orange On/Off choices, a white glowing cursor around the selected
 row, the menu's filigree dividers and a description box for the selected row. All text is in the game's own Cetra
 Display: the launcher decodes it from the player's dump or built game into `data/cache/fonts` (as
 `runtime/menu_assets.c` does for the in-game menu) and uses the system's interface font until then. Every picture is
 drawn in code (`launcher/ui/art.py`); no texture, font or sound of the game is in the repository or the release.
 
-The Triforce is also the icon of `NX2navi.exe`, `NX2navi-Setup.exe`, the window and the taskbar
-(`art.triforce_ico`, written into the release by `tools/make_launcher.py`).
+Navi (`art.NAVI`, 22 x 21 pixels, drawn in whole pixels at every size) is also the icon of `NX2navi.exe`,
+`NX2navi-Setup.exe`, the window and its taskbar button (`art.navi_ico`, written into the release by
+`tools/make_launcher.py`). The window sets that icon on itself, and the setup's shortcuts carry the window's taskbar
+identity (`NX2navi.Launcher`), so the taskbar groups and pins it under NX2navi rather than Python.
 
 Screens (`launcher/ui/app.py`): first run (dump, install folder, Desktop Shortcut, Check for Updates at Start,
 Update Channel, Begin Installation); the steps of an install, update or rebuild with their progress, the build log's
@@ -67,7 +70,8 @@ A path the Windows ANSI code page cannot hold breaks the MSYS2 tools, so the too
 `jobs.InstallJob`, one row per step:
 
 1. **Gather Build Tools** (`launcher/toolchain.py`): the packages `toolchain.lock.json` pins (MSYS2 UCRT64 clang,
-   gcc, SDL3, Opus, libvpx, dav1d, zstd, Vulkan headers and loader, VMA and their dependencies: 31 packages, 170 MB),
+   gcc, lld, SDL3, Opus, libvpx, dav1d, zstd, Vulkan headers and loader, VMA and their dependencies: about 32
+   packages, 175 MB),
    each checked against its sha256 and unpacked into `toolchain/msys64.new`, which replaces `toolchain/msys64` once
    complete. No MSYS2 shell or pacman runs. Then zbic: the wheel for the bundled Python from PyPI, checked against
    PyPI's sha256, into `pydeps/`.
@@ -98,12 +102,19 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
 `jobs.ContinueUpdateJob`:
 
 4. **Update Build Tools**: only when the new release pins other packages.
-5. **Translate the Code** and **Compile Changed Files**: `make_game.py --rebuild`. The exefs and romfs steps depend
-   only on the game files, so they are kept and the dump is not needed again; the lift runs again and the compile
-   step compiles only the files whose source, included headers, flags or compiler changed (`build-cache/obj/
-   objects.json`, from clang's dependency files).
-6. **Swap In the New Build**: the link writes `ocarina.exe.new`, which replaces `ocarina.exe` only once it is
-   complete. A failed rebuild leaves the old build playable; Rebuild the Game tries again.
+5. **Translate the Code** and **Compile Changed Files**: `make_game.py --rebuild`. Most updates compile almost
+   nothing:
+   - The exefs and romfs steps depend only on the game files: they are kept, and the dump is not needed again.
+   - The lift runs only when the lifter, its patch table or the bring-up fixes changed.
+   - The runtime comes prebuilt with the release (`app/<version>/lib/libnx2navirt.a`, compiled by
+     `make_game.py --make-runtime-lib` with the release's own compiler). Only the few runtime files that include a
+     header written per install (`layout.h`, `patches.h`, `romfs_config.h`) are compiled on the player's PC.
+   - Every other file compiles only when its source, a header it includes, the flags or the compiler changed
+     (`build-cache/obj/objects.json`, from clang's dependency files). The kit's folder is not part of that key, so the
+     objects of the version before are reused although each version lives in its own folder. The lifted code
+     includes only `cpu.h` and `simd.h`: a change there compiles it all again, which is rare.
+6. **Swap In the New Build**: lld links `ocarina.exe.new`, which replaces `ocarina.exe` only once it is complete. A
+   failed rebuild leaves the old build playable; Rebuild the Game tries again.
 7. Every version but the current and the previous one is deleted.
 
 When the new version fails to start (exit code 86 from `start.pyw`, or any error within six seconds), the stub sets
@@ -127,7 +138,8 @@ Built Game" is On. The dump is never touched.
 ## Releases
 
 1. Bump `VERSION`; build the shader translator (`tools/build_xlate.py`).
-2. With Python 3.14 and uv:
+2. With Python 3.14 and uv, on Windows (the prebuilt runtime needs MSYS2's own clang; on Linux add `--wine` to run
+   it through Wine, else the release ships without it and players compile `runtime/` themselves):
 
    ```powershell
    .venv-py314\Scripts\python tools\make_launcher.py --xlate build\xlate --feed owner/name --notes notes.md
@@ -135,7 +147,8 @@ Built Game" is On. The dump is never touched.
 
    On Linux it cross-compiles the two programs with clang, lld and llvm-windres against the same MSYS2 packages and
    unpacks Tcl/Tk with msiextract (msitools). It writes into `build/launcher-release`: `NX2navi-Setup-<version>.exe`
-   (the setup program with the launcher folder appended as a zip), `NX2navi-app-<version>.zip`,
+   (the setup program with the launcher folder appended as a zip), `NX2navi-app-<version>.zip` (with the prebuilt
+   runtime),
    `NX2navi-runtime-<id>.zip` and `NX2navi-update.json`. `check_content` runs over the folder first.
 3. Upload those four files to GitHub release `v<version>` of the feed repository, by hand or with `--publish`
    (`gh release create`; add `--draft` to look before it goes out). Launchers see it at their next start.

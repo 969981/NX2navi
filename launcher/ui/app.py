@@ -1,5 +1,6 @@
 """The launcher's window, laid out like the game's options menu (docs/launcher.md, "Look"): a wooden title band with
-the Triforce and the name in the game's Cetra Display, a list of rows on the left (a bronze label cell and a dark value cell each), a white
+Navi and the name in the game's Cetra Display across the whole top (the window's own title bar: drag it to move the
+window, minimise and close at its right end), a list of rows on the left (a bronze label cell and a dark value cell each), a white
 glowing cursor on the selected row, filigree dividers between groups and a description box on the right that
 explains the selected row.
 
@@ -30,7 +31,8 @@ from ..context import Context
 from . import art
 
 W, H = 1000, 640
-BAND = (52, 948, 56)            # x0, x1, height
+BAND = (0, 1000, 56)            # x0, x1, height: the whole top of the window, which is also its title bar
+TITLE_BUTTONS = (('min', 908, 954), ('close', 954, 1000))   # x ranges on the band
 PANEL = (112, 60, 580)          # x0, top, x1
 ROWS = (140, 552, 96)           # x0, x1, top
 LABEL_W = 222                   # 54 % of the row
@@ -112,6 +114,9 @@ class App:
         self.cursor_frames, self.cursor_k = [], 0
         self.last_second = 0
         self.gamepad = winsys.Gamepad()
+        self.tb_hover = None
+        self.drag = None
+        self.ico = None
 
         root.title(NAME)
         root.resizable(False, False)
@@ -128,6 +133,8 @@ class App:
         self.root.after(150, self.tick)
         self.root.after(50, self.poll_gamepad)
         self.center()
+        self.framed = not winsys.frameless(root)   # Windows: the band is the title bar
+        self.root.after(60, self.native_window)
 
     # ---------------------------------------------------------------- scale, icon, fonts
 
@@ -151,16 +158,26 @@ class App:
         self.root.geometry(f'{w}x{h}+{x}+{y}')
 
     def set_icon(self):
+        """Navi as the window's icon: Tk's photo icon everywhere, and on Windows the .ico set on the window itself, so
+        the taskbar button shows Navi rather than Python's icon."""
         try:
-            self.photos['icon'] = art.photo(self.root, art.triforce(64))
+            self.photos['icon'] = art.photo(self.root, art.navi_icon(64))
             self.root.iconphoto(True, self.photos['icon'])
             if os.name == 'nt':
-                ico = self.layout.cache / 'nx2navi.ico'
-                if not ico.is_file():
-                    ico.write_bytes(art.triforce_ico())
-                self.root.iconbitmap(default=str(ico))
+                data = art.navi_ico()
+                self.ico = self.layout.cache / 'nx2navi.ico'
+                if not self.ico.is_file() or self.ico.read_bytes() != data:
+                    self.ico.write_bytes(data)
         except (tk.TclError, OSError) as e:
             self.ctx.log(f'icon: {e}')
+
+    def native_window(self):
+        if self.ico:
+            winsys.set_window_icon(self.root, self.ico)
+        try:
+            self.root.focus_force()
+        except tk.TclError:
+            pass
 
     def load_fonts(self):
         """The game's Cetra Display when this PC has decoded it from the player's game (data/cache/fonts), else the
@@ -239,23 +256,47 @@ class App:
         c.create_image(0, 0, anchor='nw', image=self.sprite('backdrop', lambda: art.backdrop(self.X(W), self.X(H), s)),
                        tags='static')
         bx0, bx1, bh = BAND
-        c.create_image(self.X(bx0), 0, anchor='nw', tags='static',
-                       image=self.sprite('band', lambda: art.band(self.X(bx1) - self.X(bx0), self.X(bh), s)))
         px0, ptop, px1 = PANEL
         c.create_image(self.X(px0), self.X(ptop), anchor='nw', tags='static',
                        image=self.sprite('panel', lambda: art.panel(self.X(px1) - self.X(px0), self.X(H - ptop), s)))
-        tri = self.sprite('triforce', lambda: art.triforce(self.X(44)))
+        c.create_image(self.X(bx0), 0, anchor='nw', tags='static',
+                       image=self.sprite('band', lambda: art.band(self.X(bx1) - self.X(bx0), self.X(bh), s)))
+        k = max(1, int(round(2 * s)))   # Navi in whole pixels: two screen pixels per artwork pixel at 100 %
+        emblem = self.sprite(('navi', k), lambda: art.navi(k))
+        ew = emblem.width()
         title_w = self.f['band'].measure(NAME)
         gap = self.X(12)
-        total = self.X(44) + gap + title_w
-        x = self.X(W / 2) - total // 2
-        c.create_image(x, self.X(bh / 2), anchor='w', image=tri, tags='static')
-        tx = x + self.X(44) + gap
+        x = self.X(W / 2) - (ew + gap + title_w) // 2
+        c.create_image(x, self.X(bh / 2), anchor='w', image=emblem, tags='static')
+        tx = x + ew + gap
         c.create_text(tx + 1, self.X(bh / 2) + self.X(2), text=NAME, anchor='w', font=self.f['band'], fill='#1a120a',
                       tags='static')
         c.create_text(tx, self.X(bh / 2), text=NAME, anchor='w', font=self.f['band'], fill=P['band_text'],
                       tags='static')
+        c.create_rectangle(0, 0, self.X(W) - 1, self.X(H) - 1, outline='#140e09', tags='static')
         c.tag_lower('static')
+        self.draw_title_buttons()
+
+    def draw_title_buttons(self):
+        """Minimise and close at the band's right end, lit when the mouse is over them."""
+        c, X = self.canvas, self.X
+        c.delete('tb')
+        bh = X(BAND[2])
+        for kind, x0, x1 in TITLE_BUTTONS:
+            if self.tb_hover == kind:
+                c.create_rectangle(X(x0), 0, X(x1), bh - 1, outline='', tags='tb',
+                                   fill=P['close_hover'] if kind == 'close' else P['button_hover'])
+            size = X(12)
+            glyph = self.sprite(('glyph', kind, size), lambda kd=kind: art.title_glyph(kd, size, self.s))
+            c.create_image((X(x0) + X(x1)) // 2, bh // 2, image=glyph, tags='tb')
+
+    def title_button_at(self, x, y):
+        if y >= self.X(BAND[2]):
+            return None
+        for kind, x0, x1 in TITLE_BUTTONS:
+            if self.X(x0) <= x < self.X(x1):
+                return kind
+        return None
 
     # ---------------------------------------------------------------- input
 
@@ -269,6 +310,10 @@ class App:
             r.bind(key, fn)
         self.canvas.bind('<Motion>', self.on_motion)
         self.canvas.bind('<Button-1>', self.on_click)
+        self.canvas.bind('<B1-Motion>', self.on_drag)
+        self.canvas.bind('<ButtonRelease-1>', lambda e: setattr(self, 'drag', None))
+        self.canvas.bind('<Leave>', lambda e: self.set_tb_hover(None))
+        r.bind('<Alt-F4>', lambda e: self.on_close())
         r.protocol('WM_DELETE_WINDOW', self.on_close)
 
     def poll_gamepad(self):
@@ -344,7 +389,18 @@ class App:
                     return i
         return None
 
+    def set_tb_hover(self, kind):
+        if kind != self.tb_hover:
+            self.tb_hover = kind
+            self.draw_title_buttons()
+
+    def on_drag(self, e):
+        if self.drag:   # moving the window without the system's help (Linux)
+            dx, dy = self.drag
+            self.root.geometry(f'+{e.x_root - dx}+{e.y_root - dy}')
+
     def on_motion(self, e):
+        self.set_tb_hover(self.title_button_at(e.x, e.y))
         i = self.hit(e.x, e.y)
         if i is not None and i != self.focus:
             self.focus = i
@@ -360,6 +416,22 @@ class App:
                 self.render()
 
     def on_click(self, e):
+        try:
+            self.root.focus_force()
+        except tk.TclError:
+            pass
+        kind = self.title_button_at(e.x, e.y)
+        if kind == 'close':
+            self.on_close()
+            return
+        if kind == 'min':
+            self.set_tb_hover(None)
+            winsys.minimize(self.root)
+            return
+        if e.y < self.X(BAND[2]):   # the band moves the window, like a title bar
+            if not winsys.start_drag(self.root):
+                self.drag = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
+            return
         i = self.hit(e.x, e.y)
         if i is None:
             return
