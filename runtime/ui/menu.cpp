@@ -32,10 +32,12 @@ static int g_font_bad;
 #include "menu_sound.h"
 #include "menu_assets.h"
 #include "ui/menu_art.h"
+#include "ui/menu_skin.h"
 #pragma clang diagnostic pop
 #include "ui/amiibo_page.h"
 #include "ui/binds_page.h"
 #include "ui/option_rows.h"
+#include "ui/perf_panel.h"
 
 extern "C" {
 #include "amiibo.h"
@@ -209,43 +211,9 @@ static float menu_scale(uint32_t h) {
     return ((float)h >= least ? (float)h : least) / 1080.0f;
 }
 
-// The game's menu colours: a dark umber panel, warm browns for frames and what is selected, gold for the ornaments,
-// accents and the cursor, parchment text. kGreen and kOcarina keep their names for the selected and active controls.
-static const ImVec4 kGold(0.93f, 0.76f, 0.38f, 1), kGreen(0.36f, 0.26f, 0.13f, 1), kNavy(0.075f, 0.058f, 0.042f, 0.95f),
-    kOcarina(0.62f, 0.47f, 0.22f, 1);
-static void style_init(ImGuiStyle &s) {
-    ImGui::StyleColorsDark(&s);
-    s.WindowRounding = 10; s.FrameRounding = 6; s.GrabRounding = 6; s.TabRounding = 6; s.ChildRounding = 8;
-    s.WindowPadding = ImVec2(40, 30); s.FramePadding = ImVec2(14, 8); s.ItemSpacing = ImVec2(14, 12);
-    s.WindowBorderSize = 2; s.ScrollbarSize = 16;
-    ImVec4 *c = s.Colors;
-    c[ImGuiCol_WindowBg] = kNavy;
-    c[ImGuiCol_Border] = ImVec4(kGold.x, kGold.y, kGold.z, 0.55f);
-    c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_PopupBg] = kNavy;
-    c[ImGuiCol_Text] = ImVec4(0.96f, 0.92f, 0.82f, 1);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.56f, 0.46f, 1);
-    c[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.115f, 0.08f, 1);
-    c[ImGuiCol_FrameBgHovered] = ImVec4(0.24f, 0.18f, 0.10f, 1);
-    c[ImGuiCol_FrameBgActive] = kGreen;
-    c[ImGuiCol_SliderGrab] = kOcarina;
-    c[ImGuiCol_SliderGrabActive] = kGold;
-    c[ImGuiCol_CheckMark] = kGold;
-    c[ImGuiCol_Button] = ImVec4(0.19f, 0.145f, 0.09f, 1);
-    c[ImGuiCol_ButtonHovered] = kGreen;
-    c[ImGuiCol_ButtonActive] = kOcarina;
-    c[ImGuiCol_Header] = ImVec4(0.24f, 0.18f, 0.10f, 1);
-    c[ImGuiCol_HeaderHovered] = kGreen;
-    c[ImGuiCol_HeaderActive] = kOcarina;
-    c[ImGuiCol_Tab] = ImVec4(0.13f, 0.10f, 0.07f, 1);
-    c[ImGuiCol_TabHovered] = kGreen;
-    c[ImGuiCol_TabSelected] = ImVec4(0.42f, 0.31f, 0.15f, 1);
-    c[ImGuiCol_TabSelectedOverline] = kGold;
-    c[ImGuiCol_NavCursor] = kGold;
-    c[ImGuiCol_Separator] = ImVec4(kGold.x, kGold.y, kGold.z, 0.30f);
-    c[ImGuiCol_ScrollbarGrab] = ImVec4(0.36f, 0.28f, 0.16f, 1);
-    c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0.2f);
-}
+// The gold of the title and its Triforce, and the panel's umber for the boot screen (the rest of the menu's colours:
+// ui/menu_skin.cpp skin_style).
+static const ImVec4 kGold(0.93f, 0.76f, 0.38f, 1), kNavy(0.075f, 0.058f, 0.042f, 0.95f);
 
 // The Triforce, its top at (x, y), h high, drawn with the title.
 static void triforce(ImDrawList *dl, float x, float y, float h, ImU32 col) {
@@ -263,7 +231,7 @@ static void make_context(void) {
     io.LogFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     io.BackendPlatformName = "nx2navi_menu";
-    style_init(g_base_style);
+    skin_style(g_base_style);
     ImGui::GetStyle() = g_base_style;
     g_ctx_ok = 1;
 }
@@ -433,6 +401,8 @@ static int fonts_up(float scale) {
         rc.FontDataOwnedByAtlas = false;
         fa->AddFontFromMemoryTTF((void *)roboto_ttf, (int)sizeof roboto_ttf, 30.0f * scale, &rc, kRanges);
     }
+    skin_atlas_add(fa);    // the boxes' grain tile (ui/menu_skin.cpp), drawn into the atlas once it is built
+    skin_atlas_fill(fa);   // builds the atlas, which the upload below then takes as it is
     vk_queue_lock();   // the upload submits on the queue and waits for it
     int ok = ImGui_ImplVulkan_CreateFontsTexture();
     // ClarimoUDPE's line (ascent to descent, which is all Dear ImGui spaces lines by) leaves wrapped lines touching: the
@@ -1113,10 +1083,12 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     }
     const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
     float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - st.ItemSpacing.x, y));
-    if (ImGui::Button(cont, ImVec2(bw, 0))) set_open(0);
-    ImGui::SameLine();
-    if (ImGui::Button(quit, ImVec2(bw, 0))) gfx_window_request_close();
+    // the save menu's brown buttons, with the game's cursor on the selected one (ui/menu_skin.cpp)
+    float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
+    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap, y));
+    if (skin_widget_button(cont, ImVec2(bw, 0), scale)) set_open(0);
+    ImGui::SameLine(0, gap);
+    if (skin_widget_button(quit, ImVec2(bw, 0), scale)) gfx_window_request_close();
     menu_sounds_frame();
     bool was_modal = g_modal || binds_modal();
     if (g_tab != TAB_CONTROLS) g_modal = false;
@@ -1205,54 +1177,13 @@ static void perf_tick(uint64_t now, const MenuTarget *t) {
     g_perf_last_ns = now;
 }
 
-// The panel keeps its width while the numbers change: every column is as wide as the widest text it can show, measured
-// on samples of 8s (Roboto's digits share one width), and the numbers are right-aligned in it.
-struct PerfCol { UiTextId fmt; float sample; };
-
-static float perf_text_w(UiTextId fmt, float v) {
-    char b[64];
-    snprintf(b, sizeof b, menu_text(fmt), v);
-    return ImGui::CalcTextSize(b).x;
-}
-
-// A fixed column as wide as the widest of the formats (with their samples) and labels given.
-static void perf_column(const char *id, const PerfCol *cols, int n, const UiTextId *labels = nullptr, int nl = 0) {
-    float w = ImGui::CalcTextSize(menu_text(UI_MENU_OV_NONE)).x;
-    for (int i = 0; i < n; i++) w = fmaxf(w, perf_text_w(cols[i].fmt, cols[i].sample));
-    for (int i = 0; i < nl; i++) w = fmaxf(w, ImGui::CalcTextSize(menu_text(labels[i])).x);
-    ImGui::TableSetupColumn(id, ImGuiTableColumnFlags_WidthFixed, w);
-}
-
-static void perf_right(const char *s, bool dim) {
-    float pad = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(s).x;
-    if (pad > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + pad);
-    if (dim) ImGui::TextDisabled("%s", s);
-    else ImGui::TextUnformatted(s);
-}
-
-// One cell of the full panel's table: fmt (a catalog format, one number) with v, or "-" when the machine gives none.
-static void perf_cell(UiTextId fmt, float v) {
-    ImGui::TableNextColumn();
-    if (v < 0) return perf_right(menu_text(UI_MENU_OV_NONE), true);
-    char b[64];
-    snprintf(b, sizeof b, menu_text(fmt), v);
-    perf_right(b, false);
-}
-
-static void perf_label(UiTextId label, const ImVec4 &c) {
-    ImGui::TableNextColumn();
-    ImGui::TextColored(c, "%s", menu_text(label));
-}
-
-static float perf_gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
-
 // The picture lines: the window, the game image the present shows and the 3D scene it holds (resolution.c), how the
 // present scales the image to the window (gfx_present.c, the last present), the frame limit and the presentation mode
-// in use.
-static void perf_picture(const MenuTarget *t, const ImVec4 &c) {
+// in use; formatted into the panel's picture lines.
+static void perf_picture(const MenuTarget *t, PerfPanel *p) {
     unsigned out[2], scene[2];
     res_sizes(out, scene);
-    char v[6][64];
+    char (*v)[64] = p->picture;
     snprintf(v[0], sizeof v[0], menu_text(UI_MENU_OV_FMT_SIZE), t->width, t->height);
     snprintf(v[1], sizeof v[1], menu_text(UI_MENU_OV_FMT_SIZE), (unsigned)t->image_w, (unsigned)t->image_h);
     snprintf(v[2], sizeof v[2], menu_text(UI_MENU_OV_FMT_SCENE), scene[0], scene[1], scene[0] * 100.0 / out[0]);
@@ -1274,42 +1205,16 @@ static void perf_picture(const MenuTarget *t, const ImVec4 &c) {
     if (hz > 0) snprintf(v[4], sizeof v[4], menu_text(UI_MENU_OV_FPS), hz);
     const char *pm = present_name(gfx_window_present_mode());
     snprintf(v[5], sizeof v[5], "%s", pm ? pm : menu_text(UI_MENU_OV_NONE));
-    static const UiTextId labels[6] = {UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE,
-                                       UI_MENU_OV_SCALING, UI_MENU_OV_LIMIT, UI_MENU_OV_PRESENT};
-    // The 3D scene's size is known only where resolution.c sets it (the builds with its patch sets); Ocarina sizes its own scene
-    // dynamically and res_sizes would report a fixed 1600x900, so the line is left out
-    bool scene_known = res_adjustable() != 0;
-    if (!ImGui::BeginTable("##perfp", 2, ImGuiTableFlags_SizingFixedFit)) return;
-    float vw = 0;
-    for (auto &s : v) vw = fmaxf(vw, ImGui::CalcTextSize(s).x);
-    ImGui::TableSetupColumn("##p0", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("##p1", ImGuiTableColumnFlags_WidthFixed, vw);
-    for (int i = 0; i < 6; i++) {
-        if (i == 2 && !scene_known) continue;
-        perf_label(labels[i], c);
-        ImGui::TableNextColumn();
-        perf_right(v[i], false);
-    }
-    ImGui::EndTable();
+    // The 3D scene's size is known only where resolution.c sets it (the builds with its patch sets); Ocarina sizes its
+    // own scene dynamically and res_sizes would report a fixed 1600x900, so the line is left out
+    p->scene_known = res_adjustable() != 0;
 }
 
+// The full panel (ui/perf_panel.cpp draws it in the menu's look): the numbers of this frame.
 static void perf_full_draw(const MenuTarget *t, float scale) {
-    float w = (float)t->width;
-    PerfStats s;
-    perfmon_snapshot(&s);
-    ImGui::SetNextWindowPos(ImVec2(w - 12 * scale, 12 * scale), ImGuiCond_Always, ImVec2(1, 0));
-    ImGui::SetNextWindowBgAlpha(0.6f);
-    ImGui::Begin("##perf", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
-                                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
-    // under the menu while it is open (the settings stay readable), else over everything
-    if (g_open.load(std::memory_order_relaxed)) ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
-    else ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-    ImGui::SetWindowFontScale(0.72f);
-    const ImVec4 gpu_c(0.55f, 0.83f, 0.31f, 1), cpu_c(0.18f, 0.59f, 0.80f, 1), ram_c(0.80f, 0.45f, 0.70f, 1),
-        fps_c(0.95f, 0.95f, 0.95f, 1), wait_c(0.93f, 0.76f, 0.33f, 1), pic_c(0.62f, 0.70f, 0.95f, 1);
-    // the port version and the game update first, so a screenshot in a bug report carries both; formatted once per
-    // menu language
+    static PerfPanel p;
+    perfmon_snapshot(&p.s);
+    // the port version and the game update, formatted once per menu language
     static char ver[96];
     static const char *ver_fmt;
     if (ver_fmt != menu_text(UI_MENU_VERSION)) {
@@ -1318,82 +1223,11 @@ static void perf_full_draw(const MenuTarget *t, float scale) {
         snprintf(game, sizeof game, "%d.%d.%d", rt_game_version / 100, rt_game_version / 10 % 10, rt_game_version % 10);
         snprintf(ver, sizeof ver, ver_fmt, rt_port_version, game);
     }
-    ImGui::TextDisabled("%s", ver);
-    if (ImGui::BeginTable("##perft", 4, ImGuiTableFlags_SizingFixedFit)) {
-        static const UiTextId labels[] = {UI_MENU_OV_GPU, UI_MENU_OV_VRAM, UI_MENU_OV_CPU, UI_MENU_OV_RAM,
-                                          UI_MENU_OV_FPS_LABEL, UI_MENU_OV_FRAME_LABEL};
-        static const PerfCol c1[] = {{UI_MENU_OV_FMT_PCT, 100}, {UI_MENU_OV_FMT_GB, 888.8f}, {UI_MENU_OV_FMT_FPS, 888},
-                                     {UI_MENU_OV_FRAME_MS, 888.8f}};
-        static const PerfCol c2[] = {{UI_MENU_OV_FMT_TEMP, 188}, {UI_MENU_OV_FMT_GB_OF, 888.8f}, {UI_MENU_OV_LOW1, 888},
-                                     {UI_MENU_OV_MAX_MS, 8888.8f}};
-        static const PerfCol c3[] = {{UI_MENU_OV_FMT_POWER, 888}, {UI_MENU_OV_FMT_MHZ, 8888}, {UI_MENU_OV_GAME_PCT, 100},
-                                     {UI_MENU_OV_GAME_GB, 888.8f}, {UI_MENU_OV_LOW01, 888}};
-        perf_column("##c0", nullptr, 0, labels, 6);
-        perf_column("##c1", c1, 4);
-        perf_column("##c2", c2, 4);
-        perf_column("##c3", c3, 5);
-        perf_label(UI_MENU_OV_GPU, gpu_c);
-        perf_cell(UI_MENU_OV_FMT_PCT, s.gpu_pct);
-        perf_cell(UI_MENU_OV_FMT_TEMP, s.gpu_temp_c);
-        perf_cell(UI_MENU_OV_FMT_POWER, s.gpu_power_w);
-        perf_label(UI_MENU_OV_VRAM, gpu_c);
-        perf_cell(UI_MENU_OV_FMT_GB, perf_gb(s.vram_used_mb));
-        perf_cell(UI_MENU_OV_FMT_GB_OF, perf_gb(s.vram_total_mb));
-        perf_cell(UI_MENU_OV_FMT_MHZ, s.gpu_clock_mhz);
-        perf_label(UI_MENU_OV_CPU, cpu_c);
-        perf_cell(UI_MENU_OV_FMT_PCT, s.cpu_total_pct);
-        perf_cell(UI_MENU_OV_FMT_TEMP, s.cpu_temp_c);
-        perf_cell(UI_MENU_OV_GAME_PCT, s.cpu_game_pct);
-        perf_label(UI_MENU_OV_RAM, ram_c);
-        perf_cell(UI_MENU_OV_FMT_GB, perf_gb(s.ram_used_mb));
-        perf_cell(UI_MENU_OV_FMT_GB_OF, perf_gb(s.ram_total_mb));
-        perf_cell(UI_MENU_OV_GAME_GB, perf_gb(s.ram_game_mb));
-        ImGui::TableNextRow(ImGuiTableRowFlags_None, 6 * scale);   // a gap between the machine and the frames
-        // the frames: the rate over the last second with the lows over the last ten seconds, then the frame times
-        perf_label(UI_MENU_OV_FPS_LABEL, fps_c);
-        perf_cell(UI_MENU_OV_FMT_FPS, s.fps);
-        perf_cell(UI_MENU_OV_LOW1, s.low1_fps);
-        perf_cell(UI_MENU_OV_LOW01, s.low01_fps);
-        if (gfx_output_fps() > 0) {   // frame generation: what the display gets, generated frames included
-            perf_label(UI_MENU_OV_FG_LABEL, fps_c);
-            perf_cell(UI_MENU_OV_FMT_FPS, (float)gfx_output_fps());
-            ImGui::TableNextColumn();
-            ImGui::TableNextColumn();
-        }
-        perf_label(UI_MENU_OV_FRAME_LABEL, fps_c);
-        perf_cell(UI_MENU_OV_FRAME_MS, s.frame_ms_avg);
-        perf_cell(UI_MENU_OV_MAX_MS, s.frame_ms_max);
-        ImGui::TableNextColumn();
-        ImGui::EndTable();
-    }
-    float top = s.frame_ms_max > 50 ? s.frame_ms_max : 50;
-    // as wide as the panel the tables size; the plot does not count toward that width, so the panel can still shrink
-    ImGuiWindow *win = ImGui::GetCurrentWindow();
-    float max_x = win->DC.CursorMaxPos.x;
-    ImGui::PlotLines("##ft", s.frame_ms, PERF_HISTORY, 0, nullptr, 0, top, ImVec2(-FLT_MIN, 48 * scale));
-    win->DC.CursorMaxPos.x = max_x;
-    // per frame, averaged over the last half second; the labels' column stretches, so the numbers end at the panel's
-    // right edge, and the table still asks for no more than its widest label and number
-    if (ImGui::BeginTable("##perfw", 2, ImGuiTableFlags_SizingFixedFit)) {
-        static const PerfCol c1[] = {{UI_MENU_OV_FMT_MS, 888.88f}, {UI_MENU_OV_PER_FRAME, 888.8f}};
-        ImGui::TableSetupColumn("##w0", ImGuiTableColumnFlags_WidthStretch);
-        perf_column("##w1", c1, 2);
-        perf_label(UI_MENU_OV_REPLAY, wait_c);
-        perf_cell(UI_MENU_OV_FMT_MS, s.replay_ms);
-        perf_label(UI_MENU_OV_GPU_TIME, wait_c);
-        perf_cell(UI_MENU_OV_FMT_MS, s.gpu_ms);
-        perf_label(UI_MENU_OV_PIPE_WAIT, wait_c);
-        perf_cell(UI_MENU_OV_FMT_MS, s.pipe_wait_ms);
-        perf_label(UI_MENU_OV_SHADER_WAIT, wait_c);
-        perf_cell(UI_MENU_OV_FMT_MS, s.xlate_ms);
-        perf_label(UI_MENU_OV_TEX_UPLOADS, wait_c);
-        perf_cell(UI_MENU_OV_PER_FRAME, s.tex_uploads);
-        ImGui::EndTable();
-    }
-    perf_picture(t, pic_c);
-    if (s.gpu_name[0]) ImGui::TextDisabled("%s", s.gpu_name);
-    if (s.cpu_name[0]) ImGui::TextDisabled("%s", s.cpu_name);
-    ImGui::End();
+    p.version = ver;
+    perf_picture(t, &p);
+    p.fg_fps = gfx_output_fps() > 0 ? (float)gfx_output_fps() : 0;
+    p.under_menu = g_open.load(std::memory_order_relaxed) != 0;
+    perf_panel_draw(&p, (float)t->width, scale);
 }
 
 static void perf_draw(const MenuTarget *t, float scale) {
@@ -1403,10 +1237,11 @@ static void perf_draw(const MenuTarget *t, float scale) {
     // with the menu open: under its window, over the dimming layout_menu drew before
     ImDrawList *dl = g_open.load(std::memory_order_relaxed) ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
     ImVec2 sz = ImGui::CalcTextSize(g_perf_text);
-    float pad = 6 * scale;
-    ImVec2 p(w - 12 * scale - sz.x - pad * 2, 12 * scale);   // the top right corner: the game's HUD leaves it empty
-    dl->AddRectFilled(p, ImVec2(p.x + sz.x + pad * 2, p.y + sz.y + pad * 2), IM_COL32(0, 0, 0, 150), 4 * scale);
-    dl->AddText(ImVec2(p.x + pad, p.y + pad), IM_COL32(255, 255, 255, 235), g_perf_text);
+    float padx = 14 * scale, pady = 9 * scale;
+    ImVec2 p(w - 12 * scale - sz.x - padx * 2, 12 * scale);   // the top right corner: the game's HUD leaves it empty
+    // a small panel in the menu's look (ui/menu_skin.cpp), its frame scaled to the line
+    skin_panel(dl, p, ImVec2(p.x + sz.x + padx * 2, p.y + sz.y + pady * 2), scale * 0.6f, 0.9f);
+    dl->AddText(ImVec2(p.x + padx, p.y + pady), SKIN_TEXT, g_perf_text);
 }
 
 extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {

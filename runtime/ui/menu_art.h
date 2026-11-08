@@ -3,8 +3,6 @@
 #include "imgui.h"
 
 typedef enum {
-    MENU_ART_CURSOR_GLOW,   // the glow of the game's button cursor (white mask; tinted by the caller)
-    MENU_ART_CURSOR_LINE,   // its outline
     MENU_ART_FRAME_DECO,    // a frame with ornamented corners
     MENU_ART_GUIDE_BAR,     // the control guide's bar
     MENU_ART_WINDOW_BASE,   // a rounded window base

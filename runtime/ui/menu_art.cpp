@@ -1,5 +1,5 @@
 // The settings menu's art from the game's own interface textures (menu_assets.c reads them from the user's RomFS):
-// the cursor's glow and line, the frame's corner ornaments and the control guide's bar. A worker decodes them into
+// the frame's corner ornaments and the control guide's bar (the boxes and the cursor are drawn: ui/menu_skin.cpp). A worker decodes them into
 // RGBA once at start (the archive unpacks to about 240 MB and takes a moment); the window thread uploads each to the GPU
 // the first time the menu asks for it, and registers it with Dear ImGui's Vulkan back end. Without the files the menu
 // draws its plain shapes.
@@ -22,7 +22,7 @@ extern "C" {
 #define COMMON_BNTX "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs"
 
 static const char *const kNames[MENU_ART_COUNT] = {
-    "CmnBtnCursorGlow_00", "CmnBtnCursorLine_00", "LocationDeco_00", "CtrlGuideBG_00", "MessageWindowCommonBase_00",
+    "LocationDeco_00", "CtrlGuideBG_00", "MessageWindowCommonBase_00",
 };
 
 static struct Art {

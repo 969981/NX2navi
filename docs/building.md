@@ -228,6 +228,11 @@ Before a commit:
   `git config core.hooksPath .githooks` runs it before each local commit.
 - `build\<ver>\nx2navi.exe --selftest`: layout, dispatch table and host-function registry, without game files.
 
+A change to the in-game menu's look (`runtime/ui/menu_skin.cpp`, `option_rows.cpp`, `perf_panel.cpp`) can be looked at
+without game files: `python tools/menu_preview.py` builds the menu's own drawing code with the host's clang++ and
+writes the Screen tab and the full performance overlay to `build/menu-preview/` (a stand-in font, and the window's
+plain border in place of the game's ornamented frame).
+
 A change to the button prompts (`tools/make_romfs_patches.py --prompts`, `tools/button_icons.py`) passes
 `.venv-py314\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
 files); a change to the settings passes `nx2navi.exe --probe-cfg`.
