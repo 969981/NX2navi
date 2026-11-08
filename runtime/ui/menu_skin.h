@@ -1,8 +1,16 @@
-// The shapes of the game's own menus, drawn with Dear ImGui (ui/menu_skin.cpp): the save menu's brown button with its
-// inset line and corner ornaments, the options menu's white selection cursor and its filigree divider, and a dark
-// panel framed like the buttons. Sizes are in pixels at 1080 lines; s scales them (menu.cpp menu_scale).
+// The look of the game's own menus (ui/menu_skin.cpp): the save menu's brown button with its inset line and corner
+// ornaments, the options menu's white selection cursor and its filigree divider, and a dark panel framed like the
+// buttons. Each is drawn from the game's textures when they are there (ui/menu_art.cpp), else from plain shapes in the
+// same colours. Sizes are in pixels at 1080 lines; s scales them (menu.cpp menu_scale).
 #pragma once
+#include <stdint.h>
+
 #include "imgui.h"
+
+// What the art needs after it is decoded: the cursor's frame is cut out of its texture here (art: a MenuArt).
+void skin_art_prepare(int art, uint8_t *rgba, uint32_t w, uint32_t h);
+// One level of an art at half the size of the last: dst is dw x dh (each half of the source's, at least 1).
+void skin_art_halve(const uint8_t *src, uint32_t w, uint32_t h, uint8_t *dst, uint32_t dw, uint32_t dh);
 
 // The settings menu's Dear ImGui style at 1080 lines: the colours of the game's menus (a dark umber panel, warm browns
 // for frames and what is selected, gold ornaments and accents, parchment text) and the sizes of its frames.

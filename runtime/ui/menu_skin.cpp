@@ -1,13 +1,18 @@
-// The shapes of the game's own menus with Dear ImGui (ui/menu_skin.h). Colours and proportions are sampled from the
-// game: the save menu's Load and Cancel buttons (brown fill, light edge, an inset line about a twentieth of the height
-// in with a diamond and a curl at alternate corners), the options menu's cursor (a 3 px white frame with a soft
-// white-blue glow) and its divider ornament (traced: two pointed lens ends, S-waves into spiral hooks and a diamond knot
-// under the middle, in a 120 x 38 box with its centre at (60, 21)).
+// The look of the game's own menus (ui/menu_skin.h). With the game's textures (ui/menu_art.cpp) each piece is those
+// textures tinted and laid over each other in nine slices; until they are decoded, or without them, it is plain shapes
+// whose colours and proportions are sampled from the game: the save menu's Load and Cancel buttons (brown fill, light
+// edge, an inset line about a twentieth of the height in with a diamond and a curl at alternate corners), the options
+// menu's cursor (a 3 px white frame with a soft white-blue glow) and its divider ornament (traced: two pointed lens
+// ends, S-waves into spiral hooks and a diamond knot under the middle, in a 120 x 38 box with its centre at (60, 21)).
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
+
+#include <initializer_list>
 
 #include "imgui.h"
 #include "imgui_internal.h"   // NavCursorVisible
+#include "ui/menu_art.h"
 #include "ui/menu_skin.h"
 
 namespace {
@@ -92,7 +97,134 @@ const float *const kFiligree[] = {kFiligree0, kFiligree1, kFiligree2, kFiligree3
 const ImVec4 kGold(0.93f, 0.76f, 0.38f, 1), kGreen(0.36f, 0.26f, 0.13f, 1), kNavy(0.075f, 0.058f, 0.042f, 0.95f),
     kOcarina(0.62f, 0.47f, 0.22f, 1);
 
+// Where the art's boxes lie in its textures, in texels (measured from the textures). The button's layers are 489 x 133
+// with the button's box from (20, 19) to (469, 114); the cursor's are 640 x 173 and its box, the button it surrounds,
+// runs from (49, 48) to (591, 125); the panel's box runs from (53, 53) to (1147, 374) in 1200 x 427.
+const float kBtnW = 489, kBtnH = 133, kBtnL = 20, kBtnT = 19, kBtnBoxH = 95, kBtnCut = 60;
+const float kCurW = 640, kCurH = 173, kCurX = 49, kCurY = 48, kCurCut = 70, kCurScale = 0.72f;
+const float kPanelW = 1200, kPanelH = 427, kPanelM = 53;
+
+bool have_art(std::initializer_list<MenuArt> ids) {
+    ImTextureID t;
+    for (MenuArt id : ids)
+        if (!menu_art(id, &t, nullptr, nullptr)) return false;
+    return true;
+}
+
+enum { MAX_COPIES = 15 };
+struct Piece { float p0, p1, t0, t1; };
+
+// One axis of a slice: screen [a, b] from texels [x0, x1] of a texture `size` long, the outer `cut` texels c pixels
+// long. The middle is stretched, or with tile repeated at k pixels per texel: an odd number of copies, every other one
+// mirrored, so each copy meets the next on the same texels and the last meets the far corner. Mottled art stretched
+// across a wide box would turn into streaks.
+int axis(Piece *out, float a, float b, float x0, float x1, float size, float cut, float c, float k, bool tile) {
+    const float m0 = a + c, m1 = b - c, t0 = (x0 + cut) / size, t1 = (x1 - cut) / size, unit = (x1 - x0 - 2 * cut) * k;
+    int copies = 1, n = 0;
+    if (tile && unit > 0) copies = 2 * (int)floorf(((m1 - m0) / unit - 1) * 0.5f + 0.5f) + 1;
+    copies = copies < 1 ? 1 : copies > MAX_COPIES ? MAX_COPIES : copies;
+    out[n++] = {a, m0, x0 / size, t0};
+    for (int i = 0; i < copies; i++) {
+        float w = (m1 - m0) / copies;
+        out[n++] = {m0 + i * w, m0 + (i + 1) * w, i & 1 ? t1 : t0, i & 1 ? t0 : t1};
+    }
+    out[n++] = {m1, b, t1, x1 / size};
+    return n;
+}
+
+// The texels (x0, y0)-(x1, y1) of an art over [a, b] in nine slices: the outer `cut` texels on each side at k screen
+// pixels per texel, so corners keep their shape, the rest stretched or tiled. A box smaller than its two corners shrinks
+// them.
+void slice(ImDrawList *dl, MenuArt id, ImVec2 a, ImVec2 b, float x0, float y0, float x1, float y1, float cut, float k, ImU32 tint,
+           bool tile_x = false, bool tile_y = false) {
+    ImTextureID t;
+    float tw, th;
+    if (!menu_art(id, &t, &tw, &th)) return;
+    Piece xs[MAX_COPIES + 2], ys[MAX_COPIES + 2];
+    int nx = axis(xs, a.x, b.x, x0, x1, tw, cut, fminf(cut * k, (b.x - a.x) * 0.5f), k, tile_x);
+    int ny = axis(ys, a.y, b.y, y0, y1, th, cut, fminf(cut * k, (b.y - a.y) * 0.5f), k, tile_y);
+    for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++)
+            dl->AddImage(t, ImVec2(xs[i].p0, ys[j].p0), ImVec2(xs[i].p1, ys[j].p1), ImVec2(xs[i].t0, ys[j].t0), ImVec2(xs[i].t1, ys[j].t1), tint);
+}
+
+// A button layer over the box [a, b]: the whole texture, reaching past the box by its margins.
+void btn_layer(ImDrawList *dl, MenuArt id, ImVec2 a, ImVec2 b, float k, ImU32 tint, bool tile_x = false) {
+    const float mx = kBtnL * k, my = kBtnT * k;
+    slice(dl, id, ImVec2(a.x - mx, a.y - my), ImVec2(b.x + mx, b.y + my), 0, 0, kBtnW, kBtnH, kBtnCut, k, tint, tile_x);
+}
+
+// A cursor layer around the box [a, b], at a fixed size so its frame keeps its width on any box.
+void cursor_layer(ImDrawList *dl, MenuArt id, ImVec2 a, ImVec2 b, float s, ImU32 tint) {
+    const float k = kCurScale * s, mx = kCurX * k, my = kCurY * k;
+    slice(dl, id, ImVec2(a.x - mx, a.y - my), ImVec2(b.x + mx, b.y + my), 0, 0, kCurW, kCurH, kCurCut, k, tint);
+}
+
 }  // namespace
+
+// The cursor line's texture is not the line: its alpha climbs from 0 at the outer edge to full about 28 texels in, and
+// is full inside. The white frame is a band of that ramp, about 3.5 texels wide just outside the box it surrounds
+// (alpha 102 lies about six texels out from the cursor's box), so the frame follows the texture's own corners.
+void skin_art_prepare(int art, uint8_t *rgba, uint32_t w, uint32_t h) {
+    if (art != MENU_ART_CURSOR_LINE) return;
+    const int mid = 102, full = 16, soft = 8;   // in alpha steps; the ramp climbs about 8.7 of them per texel
+    for (size_t i = 0, n = (size_t)w * h; i < n; i++) {
+        int d = abs((int)rgba[i * 4 + 3] - mid) - full;
+        rgba[i * 4 + 3] = d <= 0 ? 255 : d >= soft ? 0 : (uint8_t)(255 - d * 255 / soft);
+    }
+}
+
+// A box filter over the 2 x 2 texels each destination texel covers (an odd last row or column repeats). Colour is
+// weighted by alpha, so what is transparent does not bleed into the edges of the coloured art.
+void skin_art_halve(const uint8_t *src, uint32_t w, uint32_t h, uint8_t *dst, uint32_t dw, uint32_t dh) {
+    for (uint32_t y = 0; y < dh; y++)
+        for (uint32_t x = 0; x < dw; x++) {
+            const uint32_t xs[2] = {x * 2 < w ? x * 2 : w - 1, x * 2 + 1 < w ? x * 2 + 1 : w - 1},
+                           ys[2] = {y * 2 < h ? y * 2 : h - 1, y * 2 + 1 < h ? y * 2 + 1 : h - 1};
+            uint32_t rgb[3] = {0, 0, 0}, plain[3] = {0, 0, 0}, al = 0;
+            for (int j = 0; j < 2; j++)
+                for (int i = 0; i < 2; i++) {
+                    const uint8_t *p = src + ((size_t)ys[j] * w + xs[i]) * 4;
+                    for (int c = 0; c < 3; c++) rgb[c] += p[c] * (uint32_t)p[3], plain[c] += p[c];
+                    al += p[3];
+                }
+            uint8_t *d = dst + ((size_t)y * dw + x) * 4;
+            for (int c = 0; c < 3; c++) d[c] = (uint8_t)(al ? (rgb[c] + al / 2) / al : (plain[c] + 2) / 4);
+            d[3] = (uint8_t)((al + 2) / 4);
+        }
+}
+
+extern "C" int menu_art_draw(ImDrawList *dl, MenuArt id, ImVec2 a, ImVec2 b, ImU32 tint) {
+    ImTextureID t;
+    if (!menu_art(id, &t, nullptr, nullptr)) return 0;
+    dl->AddImage(t, a, b, ImVec2(0, 0), ImVec2(1, 1), tint);
+    return 1;
+}
+
+extern "C" int menu_art_draw9(ImDrawList *dl, MenuArt id, ImVec2 a, ImVec2 b, float corner, float frac, ImU32 tint, int fill) {
+    return menu_art_draw9_turned(dl, id, a, b, corner, frac, tint, fill, 0);
+}
+
+// Nine pieces: the corners at `corner` pixels on screen from the texture's outer `frac` of each side, the edges
+// stretched between them, the middle left out (frames) or stretched (fill); the texture turned half a turn when turned,
+// its top-left corner piece at the bottom right.
+extern "C" int menu_art_draw9_turned(ImDrawList *dl, MenuArt id, ImVec2 a, ImVec2 b, float corner, float frac, ImU32 tint, int fill,
+                                     int turned) {
+    ImTextureID t;
+    if (!menu_art(id, &t, nullptr, nullptr)) return 0;
+    float c = corner, maxc = fminf((b.x - a.x) / 2, (b.y - a.y) / 2);
+    if (c > maxc) c = maxc;
+    const float xs[4] = {a.x, a.x + c, b.x - c, b.x}, ys[4] = {a.y, a.y + c, b.y - c, b.y};
+    float us[4] = {0, frac, 1 - frac, 1}, vs[4] = {0, frac, 1 - frac, 1};
+    if (turned)
+        for (int k = 0; k < 4; k++) us[k] = 1 - us[k], vs[k] = 1 - vs[k];
+    for (int j = 0; j < 3; j++)
+        for (int i = 0; i < 3; i++) {
+            if (i == 1 && j == 1 && !fill) continue;
+            dl->AddImage(t, ImVec2(xs[i], ys[j]), ImVec2(xs[i + 1], ys[j + 1]), ImVec2(us[i], vs[j]), ImVec2(us[i + 1], vs[j + 1]), tint);
+        }
+    return 1;
+}
 
 void skin_style(ImGuiStyle &s) {
     ImGui::StyleColorsDark(&s);
@@ -189,6 +321,17 @@ void skin_button(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float lift, bool d
     static const int top0[3] = {98, 75, 41}, top1[3] = {122, 95, 55}, bot0[3] = {84, 63, 32}, bot1[3] = {106, 81, 44};
     static const int grey_top[3] = {66, 58, 48}, grey_bot[3] = {56, 49, 40};
     lift = lift < 0 ? 0 : lift > 1 ? 1 : lift;
+    if (have_art({MENU_ART_BTN_RIM, MENU_ART_BTN_FILL, MENU_ART_BTN_GRAIN, MENU_ART_BTN_EDGE, MENU_ART_BTN_LINE})) {
+        static const int fill0[3] = {100, 76, 42}, fill1[3] = {128, 99, 58}, grain0[3] = {150, 118, 76}, grain1[3] = {178, 144, 96};
+        static const int grey_fill[3] = {76, 67, 56}, grey_grain[3] = {128, 116, 100};
+        const float t = (b.y - a.y) / kBtnBoxH;
+        btn_layer(dl, MENU_ART_BTN_RIM, a, b, t, rgba(20, 14, 8, 0.85f));
+        btn_layer(dl, MENU_ART_BTN_FILL, a, b, t, dim ? mix(grey_fill, grey_fill, 0, 1) : mix(fill0, fill1, lift, 1));
+        btn_layer(dl, MENU_ART_BTN_GRAIN, a, b, t, dim ? mix(grey_grain, grey_grain, 0, 0.26f) : mix(grain0, grain1, lift, 0.32f), true);
+        btn_layer(dl, MENU_ART_BTN_EDGE, a, b, t, dim ? rgba(98, 88, 74, 1) : rgba(140, 116, 74, 1));
+        btn_layer(dl, MENU_ART_BTN_LINE, a, b, t, dim ? rgba(112, 102, 88, 1) : rgba(150 + (int)(24 * lift), 124 + (int)(20 * lift), 80 + (int)(12 * lift), 1));
+        return;
+    }
     const float k = 1.0f * s;
     dl->AddRectFilled(a, b, rgba(28, 22, 14, 0.92f));   // the dark rim between the button and what is behind it
     ImVec2 ia(a.x + k, a.y + k), ib(b.x - k, b.y - k);
@@ -208,6 +351,10 @@ float skin_cursor_reach(float s) { return 3.0f * s + 2.5f * s + 12.0f * s; }
 static float breath(void) { return 0.5f - 0.5f * cosf((float)ImGui::GetTime() * 6.2831853f / 1.6f); }
 
 void skin_cursor_glow(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float alpha) {
+    if (have_art({MENU_ART_CURSOR_GLOW})) {
+        cursor_layer(dl, MENU_ART_CURSOR_GLOW, a, b, s, rgba(164, 194, 240, alpha * (0.78f + 0.22f * breath())));
+        return;
+    }
     // filled rounded boxes stacked from the outside in, each faint, so the glow brightens towards the frame; the box
     // drawn over them hides their middle
     const float ring = 3.0f * s + 1.25f * s, br = breath();
@@ -220,6 +367,10 @@ void skin_cursor_glow(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float alpha) 
 }
 
 void skin_cursor_frame(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float alpha) {
+    if (have_art({MENU_ART_CURSOR_LINE})) {
+        cursor_layer(dl, MENU_ART_CURSOR_LINE, a, b, s, rgba(240, 242, 245, alpha));
+        return;
+    }
     const float gap = 3.0f * s, thick = 2.5f * s, ring = gap + thick * 0.5f;
     // a little glow in the gap between the box and the frame, then the white frame
     dl->AddRect(ImVec2(a.x - gap * 0.5f, a.y - gap * 0.5f), ImVec2(b.x + gap * 0.5f, b.y + gap * 0.5f),
@@ -229,7 +380,29 @@ void skin_cursor_frame(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float alpha)
 
 float skin_filigree_height(float s) { return 26.0f * s; }
 
+// The divider from the game's art: the ornament (its ink runs from (28, 24) to (200, 65) in 228 x 80) and on each side
+// the line texture, turned round for the left one: its stroke from x = 38 to 217 stretched, then the dot up to x = 232
+// at its own proportions, the whole on the row y = 23 of 240 x 43.
+static bool filigree_art(ImDrawList *dl, float x0, float x1, float y, float s, float alpha) {
+    ImTextureID mark, stroke;
+    float mw, mh, lw, lh;
+    if (!menu_art(MENU_ART_DIVIDER, &mark, &mw, &mh) || !menu_art(MENU_ART_DIVIDER_LINE, &stroke, &lw, &lh)) return false;
+    const ImU32 orn = rgba(196, 164, 112, alpha), line = rgba(150, 126, 90, alpha);
+    const float orn_w = fminf(84.0f * s, (x1 - x0) * 0.5f), k = orn_w / 172.0f, cx = (x0 + x1) * 0.5f;
+    dl->AddImage(mark, ImVec2(cx - 114 * k, y - 44.5f * k), ImVec2(cx - 114 * k + mw * k, y - 44.5f * k + mh * k), ImVec2(0, 0), ImVec2(1, 1), orn);
+    const float lk = 0.42f * s, top = y - 9 * lk, bot = y + 9 * lk, v0 = 14 / lh, v1 = 32 / lh, dot = (232 - 217) * lk;
+    const float from = cx + orn_w * 0.5f + 5 * s, to = x1 - 4 * s;
+    if (to - dot <= from) return true;
+    const float u0 = 38 / lw, u1 = 217 / lw, u2 = 232 / lw, mirror = 2 * cx;
+    dl->AddImage(stroke, ImVec2(from, top), ImVec2(to - dot, bot), ImVec2(u0, v0), ImVec2(u1, v1), line);
+    dl->AddImage(stroke, ImVec2(to - dot, top), ImVec2(to, bot), ImVec2(u1, v0), ImVec2(u2, v1), line);
+    dl->AddImage(stroke, ImVec2(mirror - (to - dot), top), ImVec2(mirror - from, bot), ImVec2(u1, v0), ImVec2(u0, v1), line);
+    dl->AddImage(stroke, ImVec2(mirror - to, top), ImVec2(mirror - (to - dot), bot), ImVec2(u2, v0), ImVec2(u1, v1), line);
+    return true;
+}
+
 void skin_filigree(ImDrawList *dl, float x0, float x1, float y, float s, float alpha) {
+    if (filigree_art(dl, x0, x1, y, s, alpha)) return;
     const ImU32 line = rgba(96, 80, 56, alpha), dot = rgba(110, 92, 64, alpha), orn = rgba(138, 114, 76, alpha);
     float orn_w = fminf(78.0f * s, (x1 - x0) * 0.5f), k = orn_w / 108.0f, cx = (x0 + x1) * 0.5f;
     float dot_r = 1.5f * s, gap = 5.0f * s;
@@ -265,6 +438,14 @@ void skin_filigree(ImDrawList *dl, float x0, float x1, float y, float s, float a
 }
 
 void skin_panel(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float alpha) {
+    if (have_art({MENU_ART_PANEL_FILL, MENU_ART_BTN_EDGE, MENU_ART_BTN_LINE})) {
+        // the panel's own texture inside its box, with the button's edge and inset line at a size that suits a large box
+        const float k = 0.62f * s;
+        slice(dl, MENU_ART_PANEL_FILL, a, b, kPanelM, kPanelM, kPanelW - kPanelM, kPanelH - kPanelM, 40, k, rgba(255, 255, 255, alpha), true, true);
+        btn_layer(dl, MENU_ART_BTN_EDGE, a, b, k, rgba(126, 104, 68, 1));
+        btn_layer(dl, MENU_ART_BTN_LINE, a, b, k, rgba(150, 124, 80, 1));
+        return;
+    }
     dl->AddRectFilled(a, b, rgba(20, 15, 10, 0.85f * alpha));
     ImVec2 ia(a.x + 1.0f * s, a.y + 1.0f * s), ib(b.x - 1.0f * s, b.y - 1.0f * s);
     dl->AddRectFilledMultiColor(ia, ib, rgba(44, 35, 25, alpha), rgba(44, 35, 25, alpha), rgba(33, 26, 19, alpha),

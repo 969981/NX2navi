@@ -2,10 +2,12 @@
 // menu's own row code (runtime/ui/option_rows.cpp), its shapes (ui/menu_skin.cpp), the overlay panel
 // (ui/perf_panel.cpp) and the text catalog (ui_text.c), with the few runtime calls they make answered here, laid out as
 // menu.cpp layout_menu lays out the window. Dear ImGui's draw lists are rasterised on the CPU into an RGBA image.
-// Without the game's files the window has its plain border in place of the game's ornamented frame, and the given
-// font stands in for the game's.
+// Without an art folder the window has its plain border in place of the game's ornamented frame and every box is plain
+// shapes; with one (tools/menu_preview.py --romfs) the boxes use the game's textures as in the game. The given font
+// stands in for the game's either way.
 //
-// tools/menu_preview.py builds and runs it:  menu_preview <font.ttf> <scene: menu | overlay | boot> <width> <height> <out.rgba>
+// tools/menu_preview.py builds and runs it:
+//   menu_preview <font.ttf> <scene: menu | overlay | boot> <width> <height> <out.rgba> [art folder]
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -19,6 +21,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 
+#include "ui/menu_art.h"
 #include "ui/menu_skin.h"
 #include "ui/option_rows.h"
 #include "ui/perf_panel.h"
@@ -78,6 +81,49 @@ uint64_t plat_now_ns(void) {
 void rt_log(const char *, ...) {}
 }
 
+// ---- the game's art, from files menu_preview.py decoded: NN.art, a width and a height (32-bit) and the RGBA pixels of
+// the MenuArt NN, with the smaller levels the game uploads
+
+struct Level {
+    int w, h;
+    std::vector<uint8_t> px;
+};
+static std::vector<Level> g_art[MENU_ART_COUNT];
+
+static void art_load(const char *dir) {
+    for (int i = 0; i < MENU_ART_COUNT; i++) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/%02d.art", dir, i);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        uint32_t size[2];
+        if (fread(size, 4, 2, f) == 2) {
+            Level top{(int)size[0], (int)size[1], std::vector<uint8_t>((size_t)size[0] * size[1] * 4)};
+            if (fread(top.px.data(), 1, top.px.size(), f) == top.px.size()) {
+                skin_art_prepare(i, top.px.data(), size[0], size[1]);
+                g_art[i].push_back(std::move(top));
+                while (g_art[i].size() < 6 && (g_art[i].back().w > 1 || g_art[i].back().h > 1)) {
+                    const Level &last = g_art[i].back();
+                    Level next{last.w > 1 ? last.w / 2 : 1, last.h > 1 ? last.h / 2 : 1, {}};
+                    next.px.resize((size_t)next.w * next.h * 4);
+                    skin_art_halve(last.px.data(), last.w, last.h, next.px.data(), next.w, next.h);
+                    g_art[i].push_back(std::move(next));
+                }
+            }
+        }
+        fclose(f);
+    }
+}
+
+// Texture ids in the draw lists: 1 is the font atlas, 2 and up the art.
+extern "C" int menu_art(MenuArt id, ImTextureID *tex, float *w, float *h) {
+    if ((unsigned)id >= MENU_ART_COUNT || g_art[id].empty()) return 0;
+    *tex = (ImTextureID)(intptr_t)(2 + id);
+    if (w) *w = (float)g_art[id][0].w;
+    if (h) *h = (float)g_art[id][0].h;
+    return 1;
+}
+
 // ---- the scenes
 
 static void backdrop(float w, float h) {
@@ -103,7 +149,22 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
     float ww = fminf(w * 0.88f, 1400 * scale), wh = fminf(h * 0.86f, 820 * scale);
     ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(ww, wh), ImGuiCond_Always);
+    ImTextureID frame_tex;
+    const bool framed = menu_art(MENU_ART_FRAME_DECO, &frame_tex, nullptr, nullptr);
+    if (framed) ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
     ImGui::Begin("##menu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    if (framed) ImGui::PopStyleVar();
+    const ImVec2 win_p = ImGui::GetWindowPos(), win_s = ImGui::GetWindowSize();
+    if (framed) {   // as menu.cpp layout_menu draws it
+        ImDrawList *fdl = ImGui::GetWindowDrawList();
+        const float ox = 15 * scale, oy = 30 * scale;
+        fdl->PushClipRectFullScreen();
+        for (int turned = 0; turned < 2; turned++)
+            menu_art_draw9_turned(fdl, MENU_ART_FRAME_DECO, ImVec2(win_p.x - ox, win_p.y - oy),
+                                  ImVec2(win_p.x + win_s.x + ox, win_p.y + win_s.y + oy), 96 * scale, 0.2f,
+                                  IM_COL32(236, 196, 112, 235), 0, turned);
+        fdl->PopClipRect();
+    }
     const ImVec4 gold(0.93f, 0.76f, 0.38f, 1);
     ImGui::PushFont(title);
     ImVec2 at = ImGui::GetCursorScreenPos();
@@ -143,8 +204,7 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
             static const char *const sizes[] = {"", "1920x1080"};
             static const char *const size_names[] = {"1920 \xC3\x97 1080", "1920 \xC3\x97 1080"};
             opt_choice_list("NX2NAVI_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, sizes, size_names, 2, UI_MENU_WINDOW_SIZE_DESC, 0);
-            static const UiTextId present[] = {UI_MENU_PRESENT_MAILBOX, UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_IMMEDIATE};
-            opt_choice("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT, present, 3, UI_MENU_PRESENT_DESC, "in use: VSync");
+            opt_toggle_value("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate");
             static const char *const gpus[] = {""};
             static const char *const gpu_names[] = {"NVIDIA GeForce RTX 3050 Ti Laptop GPU"};   // a long name
             opt_choice_list("NX2NAVI_GPU_INDEX", UI_MENU_GPU, gpus, gpu_names, 1, UI_MENU_GPU_DESC, 0);
@@ -164,6 +224,11 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
     }
     ImGui::Spacing();
     float y = ImGui::GetCursorPosY();
+    {
+        float sy = win_p.y + y, fh = ImGui::GetFrameHeight();
+        menu_art_draw(ImGui::GetWindowDrawList(), MENU_ART_GUIDE_BAR, ImVec2(win_p.x + st.WindowPadding.x, sy),
+                      ImVec2(win_p.x + win_s.x - st.WindowPadding.x, sy + fh), IM_COL32(96, 70, 36, 170));
+    }
     const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
     float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
     float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
@@ -241,6 +306,17 @@ static void sample(const uint8_t *atlas, int aw, int ah, float u, float v, float
         }
 }
 
+// The art at (u, v) at level of detail lod, trilinear between its levels, as the game's sampler reads it.
+static void sample_art(const std::vector<Level> &levels, float u, float v, float lod, float out[4]) {
+    const float top = (float)levels.size() - 1;
+    lod = lod < 0 ? 0 : lod > top ? top : lod;
+    int l0 = (int)floorf(lod), l1 = l0 + 1 < (int)levels.size() ? l0 + 1 : l0;
+    float a[4], b[4], f = lod - l0;
+    sample(levels[l0].px.data(), levels[l0].w, levels[l0].h, u, v, a);
+    sample(levels[l1].px.data(), levels[l1].w, levels[l1].h, u, v, b);
+    for (int k = 0; k < 4; k++) out[k] = a[k] + (b[k] - a[k]) * f;
+}
+
 static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int aw, int ah) {
     for (int l = 0; l < dd->CmdListsCount; l++) {
         const ImDrawList *dl = dd->CmdLists[l];
@@ -250,6 +326,8 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
             if (cmd.UserCallback) continue;
             int cx0 = (int)fmaxf(0, cmd.ClipRect.x), cy0 = (int)fmaxf(0, cmd.ClipRect.y);
             int cx1 = (int)fminf((float)img.w, cmd.ClipRect.z), cy1 = (int)fminf((float)img.h, cmd.ClipRect.w);
+            const intptr_t tex_id = (intptr_t)cmd.GetTexID();
+            const std::vector<Level> *art = tex_id >= 2 && tex_id < 2 + MENU_ART_COUNT ? &g_art[tex_id - 2] : nullptr;
             for (unsigned i = 0; i + 2 < cmd.ElemCount; i += 3) {
                 const ImDrawVert &a = vb[cmd.VtxOffset + ib[cmd.IdxOffset + i]], &b = vb[cmd.VtxOffset + ib[cmd.IdxOffset + i + 1]],
                                  &c = vb[cmd.VtxOffset + ib[cmd.IdxOffset + i + 2]];
@@ -268,6 +346,16 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
                 int x1 = (int)fminf((float)cx1, ceilf(fmaxf(a.pos.x, fmaxf(b.pos.x, c.pos.x))));
                 int y0 = (int)fmaxf((float)cy0, floorf(fminf(a.pos.y, fminf(b.pos.y, c.pos.y))));
                 int y1 = (int)fminf((float)cy1, ceilf(fmaxf(a.pos.y, fmaxf(b.pos.y, c.pos.y))));
+                float lod = 0;
+                if (art && !art->empty()) {   // texels per screen pixel along the steeper axis
+                    const float tw = (float)(*art)[0].w, th = (float)(*art)[0].h;
+                    const float e1x = b.pos.x - a.pos.x, e1y = b.pos.y - a.pos.y, e2x = c.pos.x - a.pos.x, e2y = c.pos.y - a.pos.y;
+                    const float du1 = (b.uv.x - a.uv.x) * tw, dv1 = (b.uv.y - a.uv.y) * th, du2 = (c.uv.x - a.uv.x) * tw, dv2 = (c.uv.y - a.uv.y) * th;
+                    const float dudx = (du1 * e2y - du2 * e1y) / area, dvdx = (dv1 * e2y - dv2 * e1y) / area;
+                    const float dudy = (du2 * e1x - du1 * e2x) / area, dvdy = (dv2 * e1x - dv1 * e2x) / area;
+                    const float rho = fmaxf(sqrtf(dudx * dudx + dvdx * dvdx), sqrtf(dudy * dudy + dvdy * dvdy));
+                    lod = rho > 0 ? log2f(rho) : 0;
+                }
                 for (int y = y0; y < y1; y++)
                     for (int x = x0; x < x1; x++) {
                         float px = x + 0.5f, py = y + 0.5f;
@@ -282,7 +370,8 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
                             col[k] = (w0 * ca + w1 * cb + w2 * cc) / 255.0f;
                         }
                         float t[4];
-                        sample(atlas, aw, ah, u, v, t);   // filtered, as the GPU samples the atlas's baked lines
+                        if (art && !art->empty()) sample_art(*art, u, v, lod, t);
+                        else sample(atlas, aw, ah, u, v, t);   // filtered, as the GPU samples the atlas's baked lines
                         for (int k = 0; k < 4; k++) col[k] *= t[k];
                         float *d = &img.px[4 * ((size_t)y * img.w + x)], sa = col[3];
                         for (int k = 0; k < 3; k++) d[k] = col[k] * sa + d[k] * (1 - sa);
@@ -294,11 +383,12 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
 }
 
 int main(int argc, char **argv) {
-    if (argc != 6) {
-        fprintf(stderr, "usage: %s <font.ttf> <menu|overlay|boot> <width> <height> <out.rgba>\n", argv[0]);
+    if (argc != 6 && argc != 7) {
+        fprintf(stderr, "usage: %s <font.ttf> <menu|overlay|boot> <width> <height> <out.rgba> [art folder]\n", argv[0]);
         return 2;
     }
     const char *font = argv[1], *scene = argv[2], *out = argv[5];
+    if (argc == 7) art_load(argv[6]);
     int w = atoi(argv[3]), h = atoi(argv[4]);
     float scale = fmaxf(fminf((float)h, w * 0.68f), 720.0f) / 1080.0f;   // as menu.cpp menu_scale at 100 % display scale
     ImGui::CreateContext();

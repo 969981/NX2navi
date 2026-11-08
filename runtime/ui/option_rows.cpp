@@ -321,6 +321,15 @@ bool opt_toggle(const char *key, UiTextId label, UiTextId desc, bool inverted) {
     return true;
 }
 
+bool opt_toggle_value(const char *key, UiTextId label, UiTextId desc, const char *on_value, const char *off_value, const char *note) {
+    const CfgMeta *m = cfg_meta(key);
+    bool on = strcmp(cfg_value(key), off_value) != 0, def = m && strcmp(m->def, off_value) != 0;
+    RowView v = {menu_text(on ? UI_MENU_ON : UI_MENU_OFF), on == def, false, note};
+    if (!row(key, label, desc, v)) return false;   // any step flips it
+    apply(key, on ? off_value : on_value);
+    return true;
+}
+
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value) {
     RowView v = {value ? value : "", false, false, NULL};
     return row(id, label, desc, v) == 2;   // A or a click; left and right do nothing

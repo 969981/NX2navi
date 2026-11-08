@@ -739,13 +739,13 @@ static const char *present_name(const char *mode) {
     return nullptr;
 }
 
-// "in use: VSync" under the Presentation value when the swapchain got another mode than the setting (a driver without
-// mailbox gets fifo); NULL when they agree or before the first swapchain.
-static const char *present_note(void) {
-    const char *got = gfx_window_present_mode(), *name = present_name(got);
-    if (!*got || !strcmp(got, cfg_value("NX2NAVI_VK_PRESENT")) || !name) return nullptr;
+// "in use: VSync" under the VSync row when it is off and the driver cannot present without waiting; NULL otherwise, and
+// before the first swapchain.
+static const char *vsync_note(void) {
+    const char *got = gfx_window_present_mode();
+    if (!*got || strcmp(cfg_value("NX2NAVI_VK_PRESENT"), "immediate") || !strcmp(got, "immediate")) return nullptr;
     static char note[96];
-    snprintf(note, sizeof note, menu_text(UI_MENU_PRESENT_IN_USE), name);
+    snprintf(note, sizeof note, menu_text(UI_MENU_PRESENT_IN_USE), menu_text(UI_MENU_PRESENT_VSYNC));
     return note;
 }
 
@@ -863,8 +863,9 @@ static void tab_screen(float scale) {
     opt_begin("##screen", scale);
     opt_toggle("NX2NAVI_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
     row_window_size();
-    static const UiTextId present[] = {UI_MENU_PRESENT_MAILBOX, UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_IMMEDIATE};
-    opt_choice("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT, present, 3, UI_MENU_PRESENT_DESC, present_note());
+    // On is the default mode, mailbox with its fallbacks (gfx_present.c pick_present_mode): plain fifo would drop the
+    // game to 30 at every slow frame on a 60 Hz display. A fifo already saved also reads as on.
+    opt_toggle_value("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate", vsync_note());
     row_gpu();
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
     opt_choice("NX2NAVI_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
@@ -1472,6 +1473,7 @@ extern "C" int menu_boot_frame(const MenuTarget *t) {
         g_failed.store(1);
         return 0;
     }
+    menu_art_start();   // the box takes the game's textures as soon as they are decoded, plain shapes until then
     if (g_style_scale != scale) {
         ImGui::GetStyle() = g_base_style;
         ImGui::GetStyle().ScaleAllSizes(scale);
