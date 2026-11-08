@@ -59,6 +59,7 @@ void vk_queue_unlock(void);
 void res_sizes(unsigned out[2], unsigned scene[2]);
 int res_adjustable(void);
 int wide_available(void);
+int vk_dlaa_status(unsigned *w, unsigned *h, unsigned *ow, unsigned *oh, int *fsr);
 const char *const *vk_color_preset(const char *name);
 int vk_hdr_wanted(void);
 int vk_hdr_active(void);
@@ -869,11 +870,29 @@ static void row_framegen(void) {
     int cur = !strcmp(v, "fsr3") ? 1 : !strcmp(v, "dlss") ? 2 : 0;
     // NVIDIA DLSS (vk_dlssg.c) is listed only while it is set: Streamline now starts and takes the swapchain, but presents
     // no generated frames yet (one presented per frame, status OK)
+#ifdef _WIN32
     int n = cur == 2 ? 3 : 2;
+#else
+    int n = dlss || cur == 2 ? 3 : 2;   // DLSS Frame Generation through NGX (gfx_present.c ng_*) generates frames here
+#endif
+#ifdef _WIN32
+    const char *fg_note = menu_text(dlss ? UI_MENU_FRAMEGEN_NOTE : UI_MENU_FRAMEGEN_NOTE_FSR);
+#else
+    const char *fg_note = menu_text(UI_MENU_FRAMEGEN_NOTE_LIVE);   // live through NGX here
+#endif
     int nv = opt_choice_index("NX2NAVI_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, cur, 0,
-                              dlss ? UI_MENU_FRAMEGEN_DESC : UI_MENU_FRAMEGEN_DESC_FSR,
-                              menu_text(dlss ? UI_MENU_FRAMEGEN_NOTE : UI_MENU_FRAMEGEN_NOTE_FSR));
+                              dlss ? UI_MENU_FRAMEGEN_DESC : UI_MENU_FRAMEGEN_DESC_FSR, fg_note);
     if (nv >= 0 && nv < n) opt_apply("NX2NAVI_FRAMEGEN", values[nv]);
+    if (cur == 2) {   // the multiplier, live (cfg.c FG_MULT)
+        static const char *const mv[] = {"2", "3", "4", "5", "6", "dynamic"};
+        static const char *const mn[] = {"2x", "3x", "4x", "5x", "6x", "Dynamic"};
+        const char *m = cfg_value("NX2NAVI_FG_MULT");
+        int mc = 0;
+        for (int i = 0; i < 6; i++)
+            if (!strcmp(m, mv[i])) mc = i;
+        int sel = opt_choice_index("NX2NAVI_FG_MULT", UI_MENU_FG_MULT, mn, 6, mc, 0, UI_MENU_FG_MULT_DESC);
+        if (sel >= 0 && sel < 6) opt_apply("NX2NAVI_FG_MULT", mv[sel]);
+    }
 }
 
 // The picture's height (widescreen.c picture_height): the game's 1440 or more.
@@ -1347,6 +1366,14 @@ static void perf_picture(const MenuTarget *t, PerfPanel *p) {
     // The 3D scene's size is known only where resolution.c sets it (the builds with its patch sets); Ocarina sizes its
     // own scene dynamically and res_sizes would report a fixed 1600x900, so the line is left out
     p->scene_known = res_adjustable() != 0;
+    // DLSS (or FSR 3.1) running: the 3D scene line shows what it upscales from and to; the Scaling line below is only the
+    // last step, the picture to the window
+    unsigned dw, dh, dow, doh;
+    int fsr;
+    if (vk_dlaa_status(&dw, &dh, &dow, &doh, &fsr)) {
+        snprintf(v[2], sizeof v[2], "%s %ux%u -> %ux%u", fsr ? "FSR 3.1" : dw >= dow ? "DLAA" : "DLSS", dw, dh, dow, doh);
+        p->scene_known = true;
+    }
 }
 
 // The full panel (ui/perf_panel.cpp draws it in the menu's look): the numbers of this frame.

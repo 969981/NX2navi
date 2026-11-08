@@ -204,6 +204,15 @@
 # to match). They apply only with dlaa = 1 and the DLSS model next to the executable; otherwise the scene follows
 # render_scale. Changes while the game runs take effect at once.
 # dlss = dlaa
+# Frame generation: off, dlss (NVIDIA DLSS Frame Generation, RTX 40 and 50 GPUs) or fsr3 (AMD FSR 3.1, any GPU). Both
+# need DLSS or FSR 3.1 upscaling on (dlaa = 1), whose depth and motion vectors they use. On Linux, dlss goes through
+# NGX itself (gfx_present.c's presenter; libnvidia-ngx-dlssg.so.<version> from NVIDIA's DLSS SDK next to nx2navi) and
+# switches at once; fsr3 and Windows apply after a restart.
+# framegen = off
+# DLSS Frame Generation's multiplier (Linux, through NGX): frames shown per rendered frame, 2 to 6 (above 2 needs an
+# RTX 50 GPU), or dynamic: only the frames needed to reach the display's refresh rate at the rendered frame rate, as
+# NVIDIA's Dynamic Multi Frame Generation. Changes while the game runs take effect at once.
+# fg_mult = 2
 # The DLSS model: default (NVIDIA's advice per mode: K for dlaa, quality and balanced, M for performance, L for
 # ultra_performance), k (K in every mode) or j (the other transformer model: slightly less ghosting behind moving
 # characters, a little more flicker). Any other model by its letter, a to m: on slower RTX cards the older model e is
