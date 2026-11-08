@@ -124,5 +124,7 @@ folder's `licenses/` and in each component's own folder.
 Downloaded on the player's PC by the launcher, not distributed: the MSYS2 UCRT64 packages that
 `toolchain.lock.json` pins (clang and LLVM, Apache-2.0 with LLVM exception; GCC and binutils, GPL-3.0; the
 libraries of the "Compiler runtime in a source build" section and of `README-BuildKit.md`), from
-https://repo.msys2.org/mingw/ucrt64/; and zbic 1.0.1.post1 (GPL-2.0), from PyPI. The game build links them as a
-source build does.
+https://repo.msys2.org/mingw/ucrt64/; the MSYS2 CLANG64 clang it pins beside them (clang, LLVM and libc++,
+Apache-2.0 with LLVM exception; libffi MIT; zlib; zstd BSD-3-Clause; libxml2 MIT; libiconv LGPL-2.1+), from
+https://repo.msys2.org/mingw/clang64/, which only compiles the lifted code; and zbic 1.0.1.post1 (GPL-2.0), from
+PyPI. The game build links them as a source build does.

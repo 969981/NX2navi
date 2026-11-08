@@ -38,8 +38,8 @@ identity (`NX2navi.Launcher`), so the taskbar groups and pins it under NX2navi r
 
 Screens (`launcher/ui/app.py`): first run (dump, install folder, Desktop Shortcut, Check for Updates at Start,
 Update Channel, Begin Installation); the steps of an install, update or rebuild with their progress, the build log's
-last lines and Cancel, and after a failure Try Again and Copy Report; home (Play, Updates, Game Folder, Rebuild the
-Game, Settings); settings (update check, Hide Launcher While Playing, Keep Build Cache, Update Channel, the folders,
+last lines and Cancel, and after a failure Try Again and Copy Report; home (Play, Updates, Game Folder, Import Saves,
+Rebuild the Game, Settings); settings (update check, Hide Launcher While Playing, Keep Build Cache, Update Channel, the folders,
 Open Logs Folder, Uninstall, Back); uninstall (keep or remove the built game).
 
 Controls: the mouse (hover moves the cursor, a click selects); the keyboard (arrows, Enter or Space, Esc, F5 checks
@@ -59,7 +59,8 @@ pydeps/                  zbic, downloaded from PyPI on this PC
 toolchain/msys64/ucrt64  MSYS2's clang and libraries, downloaded from the MSYS2 repository on this PC
 toolchain/pkgs/          the downloaded package files
 data/launcher.json       settings; data/logs/launcher.log (and crash.log); data/cache/fonts
-game/                    the built game, unless another folder was chosen (its layout: README-BuildKit.md)
+game/                    the built game, unless another folder was chosen (its layout: README-BuildKit.md), with
+                         saves/ for saves to import (below)
 ```
 
 A path the Windows ANSI code page cannot hold breaks the MSYS2 tools, so the toolchain then goes to
@@ -71,12 +72,22 @@ A path the Windows ANSI code page cannot hold breaks the MSYS2 tools, so the too
 
 1. **Gather Build Tools** (`launcher/toolchain.py`): the packages `toolchain.lock.json` pins (MSYS2 UCRT64 clang,
    gcc, lld, SDL3, Opus, libvpx, dav1d, zstd, Vulkan headers and loader, VMA and their dependencies: about 32
-   packages, 175 MB),
+   packages, 175 MB; and, when the release found the same clang version there, MSYS2 CLANG64's clang with the DLLs
+   it loads: 9 packages, about 100 MB),
    each checked against its sha256 and unpacked into `toolchain/msys64.new`, which replaces `toolchain/msys64` once
    complete. No MSYS2 shell or pacman runs. Then zbic: the wheel for the bundled Python from PyPI, checked against
    PyPI's sha256, into `pydeps/`.
 2. **Inspect Your Game** to **Compile**: `tools/make_game.py --nup <dump> --out <game> --msys <toolchain> --events`,
-   whose `@@` progress lines drive the rows (check, exefs, romfs, lift, compile).
+   whose `@@` progress lines drive the rows (check, exefs, romfs, lift, compile). How it keeps the build short:
+   - The RomFS image (26 GB, mostly disk work) is packed beside the lift and the compile (processor work), so a first
+     build takes about as long as the longer of the two. Only `romfs.c`, which includes the RomFS index's
+     `romfs_config.h`, waits for the image.
+   - Every logical processor compiles, the largest files first, so no big file starts last and runs on alone.
+   - The lifted code compiles with MSYS2 CLANG64's clang when the toolchain has it: the same LLVM release as
+     UCRT64's, built with profile-guided optimisation, about a fifth faster on this code and writing the same objects
+     (it reads UCRT64's headers; `make_game.py` `fast_clang` checks that both report the same version and target).
+   - The lifted code is compiled for the processor's own level, x86-64-v3 (AVX2, FMA) or v2 (`cpu_level`): the game
+     runs on the PC that builds it, and a generic build would do every fused multiply-add of the game in software.
 3. **Prepare the Shaders**: make_game.py's last step translates every shader of the game into the game's shader
    cache and the driver's own cache (`tools/prepare_shaders.py`), so play does not stop to compile them.
 4. The game's Cetra Display is decoded for the window.
@@ -125,6 +136,21 @@ When the new version fails to start (exit code 86 from `start.pyw`, or any error
 runs. Keep Build Cache off deletes the lifted C and the objects (about 5 GB) after each build but keeps
 `build-cache/state.json`, so updates still rebuild without the dump (compiling everything).
 
+## Importing a save
+
+Import Saves (home, under Game Folder; `launcher/saves.py`) makes another save the game's own. The game folder has
+a `saves` folder with a README for it: a save put there (its files, or the folder that holds them) is taken first,
+and the row then reads "From the Saves Folder"; otherwise selecting the row asks for the folder. It recognises a
+Switch save backup (the save's files), an emulator's save folder (nested folders named by user and title ids), and
+another NX2navi game folder or its profile folder (the account folder inside). A folder with more than 4,000 files
+or 1 GB is refused as picked by mistake.
+
+The game keeps its save in `profile/save/<account>`, named after `profile/account.uid` (made as the game would when
+it never ran). The import copies the save the game would load now (a finished commit still waiting in
+`profile/save-tx`, else the account folder) to `saves/backup <date time>`, puts the new files in place and empties
+`profile/save-tx`, so the game loads the imported save. A save taken from the saves folder moves to
+`saves/imported <date time>`. It refuses while the game runs.
+
 ## Uninstalling
 
 Settings > Uninstall NX2navi, or Settings > Apps > NX2navi (which runs `NX2navi.exe --uninstall`): the launcher
@@ -167,8 +193,11 @@ repository keeps old package files, so a release keeps building with the compile
 `python tests/launcher_test.py` (Python 3.14): versions, settings, the toolchain resolver and installer against a
 local fake repository, resumed and checked downloads, the GitHub and URL feeds, staging, switching, rollback and
 pruning, unsafe archives, the font decoding on a system font wrapped like the game's, `make_game.py` on a synthetic
-`.nup` (events, skipped steps, `--rebuild` without the dump, step keys), the compile step's object cache with the
-system's C compiler, the install job with a fake `make_game.py`, and the window's selftest when a display is there.
+`.nup` (events, skipped steps, `--rebuild` without the dump, step keys), the RomFS step beside the lift and compile
+and its failure stopping the build, the compile step's object cache with the system's C compiler and its
+largest-first order, CLANG64's clang in the lock and the install, the save import (the account folder, the save
+folders it recognises, backup, the commit journal, the saves folder, refusals), the install job with a fake
+`make_game.py`, and the window's selftest when a display is there.
 
 ## Requirements and limits
 

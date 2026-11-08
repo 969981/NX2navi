@@ -26,7 +26,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog
 
-from .. import NAME, build, feed, gamefiles, jobs, versions, winsys
+from .. import NAME, build, feed, gamefiles, jobs, saves, versions, winsys
 from ..context import Context
 from . import art
 
@@ -107,6 +107,7 @@ class App:
         self.check_error = ''
         self.checked_at = 0.0
         self.message = ''
+        self.save_message = ''   # the last Import Saves result, shown in its description
         self.dumps = None
         self.dump_search = None
         self.uninstall_game = False
@@ -669,14 +670,54 @@ class App:
             upd,
             Row('divider'),
             Row('value', 'Game Folder', gd, on=lambda: self.open(gd),
-                desc=('Open the game folder. Your saves are in its profile folder, the game\'s settings in '
-                      'nx2navi.ini and its logs in logs.',)),
+                desc=('Open the game folder. The game keeps your save in its profile folder, its settings in '
+                      'nx2navi.ini and its logs in logs. Its saves folder is for saves to import.',)),
+            self.saves_row(gd),
             Row('value', 'Rebuild the Game', rebuild_value, rebuild_style, on=self.start_rebuild,
                 desc=('Build the game again from the files of the last build. Only what changed is compiled. Use it '
                       'after changing build tools, or if the game stopped starting.',)),
             Row('value', 'Settings', '', 'arrow', on=lambda: self.show('settings'),
                 desc=('Updates, the game folder, the logs and uninstalling.',)),
         ]
+
+    def saves_row(self, gd):
+        """Import Saves: a save put into the game folder's saves folder, else a folder the player picks."""
+        ready = False
+        if gd and Path(gd).is_dir():
+            try:
+                saves.ensure_saves_dir(gd)
+                ready = saves.waiting(gd)[0] is not None
+            except OSError:
+                pass
+        desc = ('Bring in a save from a Switch save backup, an emulator or another NX2navi install. Put it into the '
+                'saves folder of the game folder and select this row, or select this row and choose its folder.',
+                'Your current save is copied to the saves folder first.')
+        if self.save_message:
+            desc = (self.save_message,) + desc
+        return Row('value', 'Import Saves', 'From the Saves Folder' if ready else 'Choose a Folder',
+                   'orange_arrow' if ready else 'arrow', on=self.import_saves, desc=desc)
+
+    def import_saves(self):
+        gd = self.settings.get('game_dir')
+        if not gd or not Path(gd).is_dir():
+            self.save_message = 'Install the game first.'
+        elif (self.game_proc and self.game_proc.poll() is None) or saves.game_running(gd):
+            self.save_message = 'Quit the game first: it keeps its save open while it runs.'
+        else:
+            try:
+                folder = None
+                if saves.waiting(gd)[0] is None:
+                    folder = filedialog.askdirectory(parent=self.root, title='Choose the folder with the save',
+                                                     initialdir=str(saves.ensure_saves_dir(gd)), mustexist=True)
+                    if not folder:
+                        return
+                r = saves.import_save(gd, folder, log=self.ctx.log)
+            except (saves.SaveError, OSError) as e:
+                self.save_message = f'The save was not imported: {e}'
+            else:
+                self.save_message = (f'Save imported: {r["files"]} files from {r["source"].name}.'
+                                     + (f' Your old save is in saves\\{r["backup"].name}.' if r['backup'] else ''))
+        self.show('home', self.focus)
 
     def update_desc(self):
         r = self.release
@@ -1155,6 +1196,10 @@ class App:
             cw, ch = X(9), X(12)
             img = self.sprite(('chev', cw, ch, False, 'dim'), lambda: art.chevron(cw, ch, '#d9ccae'))
             c.create_image(x1 - X(16), cy, anchor='e', image=img, tags='dyn')
+            if r.value:   # a value, centred, beside the arrow
+                avail = (x1 - vx0) - X(48)
+                vfont = self.fit_font(vfont, r.value, avail, 0.8)
+                c.create_text(cx, cy, text=fit(vfont, r.value, avail), font=vfont, fill=P['value_text'], tags='dyn')
         else:
             color = {'normal': P['value_text'], 'dim': P['dim'], 'salmon': P['salmon']}.get(r.style, P['value_text'])
             avail = (x1 - vx0) - X(20) - (X(21) if r.check else 0)

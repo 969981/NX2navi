@@ -13,6 +13,7 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
 - jobs: an install driven by a fake make_game.py
 - the window: --selftest draws every screen (skipped without a display)
 """
+import contextlib
 import hashlib
 import http.server
 import io
@@ -25,6 +26,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -33,7 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
 
-from launcher import build, feed, gamefiles, jobs, net, settings, toolchain, updater, versions  # noqa: E402
+from launcher import build, feed, gamefiles, jobs, net, saves, settings, toolchain, updater, versions  # noqa: E402
 from launcher.context import Context  # noqa: E402
 from launcher.paths import Layout  # noqa: E402
 
@@ -150,6 +152,24 @@ def fake_repo(folder, damage=None):
     (folder / 'ucrt64.db').write_bytes(tar_bytes(entries))
 
 
+def fake_fast_repo(folder, clang_version='1.0-1'):
+    """The CLANG64 packages toolchain.FAST_PACKAGES names, in folder/clang64."""
+    folder = folder / 'clang64'
+    folder.mkdir()
+    P = toolchain.FAST_PREFIX
+    files = {'clang': {'clang64/bin/clang.exe': b'clang64', 'clang64/bin/clang-repl.exe': b'not needed',
+                       'clang64/lib/clang/23/include/immintrin.h': b'// x86'},
+             'llvm-libs': {'clang64/bin/libLLVM-23.dll': b'llvm', 'clang64/share/doc/x': b'skipped'}}
+    entries = {}
+    for root in toolchain.FAST_PACKAGES:
+        name, ver = P + root, clang_version if root == 'clang' else '1.0-1'
+        fn = f'{name}-{ver}-any.pkg.tar.zst'
+        data = tar_bytes({'.PKGINFO': b'pkg', **files.get(root, {f'clang64/bin/{root}.dll': b'dll'})})
+        (folder / fn).write_bytes(data)
+        entries[f'{name}-{ver}/desc'] = desc(name, ver, fn, data, (), ())
+    (folder / 'clang64.db').write_bytes(tar_bytes(entries))
+
+
 class Tmp(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='nx2navi-test-'))
@@ -214,6 +234,39 @@ class ToolchainTest(Tmp):
         toolchain.install(self.layout, lock, log=lambda m: None)           # cached package files: no download
         self.assertEqual(len(srv.hits), hits)
         self.assertEqual(toolchain.lock_digest(lock), toolchain.installed(self.layout)['digest'])
+
+    def test_fast_clang_beside(self):
+        """CLANG64's clang goes into msys64/clang64 when its version matches UCRT64's: clang.exe, the DLLs and its
+        headers only."""
+        repo = self.tmp / 'repo'
+        repo.mkdir()
+        fake_repo(repo)
+        fake_fast_repo(repo)
+        srv = Server(repo)
+        self.addCleanup(srv.close)
+        lock = toolchain.make_lock(srv.url, fast_repo=srv.url + 'clang64/')
+        self.assertEqual(lock.get('fast_repo'), srv.url + 'clang64/')
+        self.assertEqual(sum(p.get('env') == 'clang64' for p in lock['packages']), len(toolchain.FAST_PACKAGES))
+        toolchain.install(self.layout, lock, log=lambda m: None)
+        fast = self.layout.msys.parent / 'clang64'
+        self.assertEqual((fast / 'bin' / 'clang.exe').read_bytes(), b'clang64')
+        self.assertTrue((fast / 'bin' / 'libLLVM-23.dll').is_file())
+        self.assertTrue((fast / 'lib' / 'clang' / '23' / 'include' / 'immintrin.h').is_file())
+        self.assertFalse((fast / 'bin' / 'clang-repl.exe').exists())
+        self.assertFalse((fast / 'share').exists())
+        self.assertTrue(toolchain.is_current(self.layout, lock))
+
+    def test_fast_clang_left_out_on_another_version(self):
+        repo = self.tmp / 'repo'
+        repo.mkdir()
+        fake_repo(repo)
+        fake_fast_repo(repo, clang_version='2.0-1')
+        srv = Server(repo)
+        self.addCleanup(srv.close)
+        lock = toolchain.make_lock(srv.url, fast_repo=srv.url + 'clang64/')
+        self.assertNotIn('fast_repo', lock)
+        self.assertIn('2.0-1', lock['fast_skipped'])
+        self.assertFalse(any(p.get('env') for p in lock['packages']))
 
     def test_damaged_package_refused(self):
         repo = self.tmp / 'repo'
@@ -588,6 +641,87 @@ class MakeGameTest(Tmp):
         (kits[1] / 'runtime' / 'h.h').write_text('#define V 2\n')        # the new version changed the header
         self.assertEqual(go(kits[1])[:2], (1, 0))
 
+    def main_with(self, romfs, lift, compile_):
+        """make_game.main() in this process for a first build, with the given step functions in place of the real
+        lift and compile (they need real modules and clang). Returns the SystemExit code, or 0."""
+        sys.path.insert(0, str(self.layout.pydeps))   # the fake zbic
+        saved = (self.mg.step_romfs, self.mg.step_lift, self.mg.step_compile, sys.argv)
+        self.mg.step_romfs, self.mg.step_lift, self.mg.step_compile = romfs, lift, compile_
+        sys.argv = ['make_game.py', '--nup', str(self.nup), '--out', str(self.out), '--msys', str(self.msys)]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.mg.main()
+            return 0
+        except SystemExit as e:
+            return e.code
+        finally:
+            self.mg.step_romfs, self.mg.step_lift, self.mg.step_compile, sys.argv = saved
+            sys.path.remove(str(self.layout.pydeps))
+
+    def test_romfs_beside_lift_and_compile(self):
+        """A first build packs the RomFS image while the lift and the compile run; the compile gets the running step
+        and waits for it only for the RomFS index."""
+        real_romfs, seen = self.mg.step_romfs, {}
+
+        def romfs(src, out, jobs):
+            time.sleep(0.5)
+            real_romfs(src, out, jobs)
+
+        def lift(out, cache):
+            seen['lift_beside_romfs'] = not (out / 'romfs' / 'index.json').exists()
+
+        def compile_(out, cache, msys, jobs, romfs_job=None):
+            seen['job'] = romfs_job is not None
+            romfs_job.join()
+            seen['image_after_join'] = (out / 'romfs' / 'romfs.bin').is_file()
+            (out / self.mg.EXE_NAME).write_bytes(b'MZ')
+        self.assertEqual(self.main_with(romfs, lift, compile_), 0)
+        self.assertEqual(seen, {'lift_beside_romfs': True, 'job': True, 'image_after_join': True})
+        steps = json.loads((self.out / 'build-cache' / 'state.json').read_text())['steps']
+        self.assertEqual(set(steps), {'exefs', 'romfs', 'lift', 'compile'})
+
+    def test_romfs_failure_stops_the_build(self):
+        ran, lifting, failed = [], threading.Event(), threading.Event()
+
+        def romfs(src, out, jobs):
+            lifting.wait(5)
+            failed.set()
+            self.mg.fail('the RomFS image could not be written')
+
+        def lift(out, cache):
+            lifting.set()
+            failed.wait(5)    # the RomFS step fails while the lift runs
+            time.sleep(0.1)
+            ran.append('lift')
+
+        def compile_(out, cache, msys, jobs, romfs_job=None):
+            ran.append('compile')
+        self.assertEqual(self.main_with(romfs, lift, compile_), 1)
+        self.assertEqual(ran, ['lift'])
+        steps = json.loads((self.out / 'build-cache' / 'state.json').read_text())['steps']
+        self.assertNotIn('romfs', steps)
+
+    @unittest.skipIf(os.name == 'nt', 'uses a POSIX script as the compiler')
+    def test_largest_source_compiles_first(self):
+        src, obj = self.tmp / 'src', self.tmp / 'obj'
+        src.mkdir()
+        obj.mkdir()
+        for name, size in (('small.c', 10), ('big.c', 5000), ('mid.c', 800)):
+            (src / name).write_text('/*' + 'x' * size + '*/\n')
+        order = self.tmp / 'order.txt'
+        cc = self.tmp / 'fakecc'
+        cc.write_text(f'#!{sys.executable}\nimport sys\nargs = sys.argv[1:]\n'
+                      'dep, out, s = args[args.index("-MF") + 1], args[args.index("-o") + 1], args[-1]\n'
+                      f'open({str(order)!r}, "a").write(s.rsplit("/", 1)[-1] + "\\n")\n'
+                      'open(out, "w").close(); open(dep, "w").write(out + ": " + s + "\\n")\n')
+        cc.chmod(0o755)
+        srcs = [(src / n, obj / (n[:-2] + '.o')) for n in ('small.c', 'big.c', 'mid.c')]
+        cache = self.mg.ObjectCache(obj / 'objects.json')
+        compiled, reused, bad = self.mg.compile_all(srcs, lambda s, d: [str(cc), '-c', '-o', str(d), str(s)], cache,
+                                                    1, dict(os.environ))
+        self.assertEqual((compiled, bad), (3, []))
+        self.assertEqual(order.read_text().split(), ['big.c', 'mid.c', 'small.c'])
+
     def test_runtime_split(self):
         tainted = self.mg.per_install_names()
         self.assertTrue({'layout.h', 'patches.h', 'romfs_config.h'} <= tainted)
@@ -685,6 +819,91 @@ class JobTest(Tmp):
 
 # ---------------------------------------------------------------- the icon
 
+class SavesTest(unittest.TestCase):
+    """launcher/saves.py: where the game keeps its save, the save folders it recognises, and the import."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='nx2navi-saves-'))
+        self.game = self.tmp / 'game'
+        self.game.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def files(self, folder, names):
+        for n, data in names.items():
+            (folder / n).parent.mkdir(parents=True, exist_ok=True)
+            (folder / n).write_bytes(data)
+        return folder
+
+    def test_account_folder_as_the_game_names_it(self):
+        (self.game / 'profile').mkdir()
+        lo, hi = 0x1122334455667788, 0x99aabbccddeeff00
+        (self.game / 'profile' / 'account.uid').write_bytes(lo.to_bytes(8, 'little') + hi.to_bytes(8, 'little'))
+        self.assertEqual(saves.account_dir(self.game).name, f'{hi:016x}{lo:016x}')   # fs_host.c storage_init
+        fresh = self.tmp / 'fresh'
+        acct = saves.account_dir(fresh)                       # a game that never ran: the account is made
+        self.assertEqual(len((fresh / 'profile' / 'account.uid').read_bytes()), 16)
+        self.assertEqual(saves.account_dir(fresh), acct)
+
+    def test_save_folders_found(self):
+        plain = self.files(self.tmp / 'backup', {'save.dat': b'1', 'option.dat': b'2'})
+        self.assertEqual(saves.find_save(plain)[0], plain)
+        emu = self.files(self.tmp / 'emu', {'0000000000000000/' + 'a' * 32 + '/0100F2C0115B6000/save.dat': b'1'})
+        self.assertEqual(saves.find_save(emu)[0].name, '0100F2C0115B6000')
+        other = self.files(self.tmp / 'other', {'profile/save/' + 'b' * 32 + '/save.dat': b'1', 'ocarina.exe': b''})
+        self.assertEqual(saves.find_save(other)[0].name, 'b' * 32)
+        self.assertEqual(saves.find_save(other / 'profile')[0].name, 'b' * 32)
+        (self.tmp / 'empty').mkdir()
+        self.assertIsNone(saves.find_save(self.tmp / 'empty')[0])
+
+    def test_import_backs_up_and_clears_the_journal(self):
+        acct = saves.account_dir(self.game)
+        self.files(acct, {'save.dat': b'old'})
+        tx = self.game / 'profile' / 'save-tx'
+        self.files(tx, {'ready-3/save.dat': b'newer', 'work/save.dat': b'w'})
+        src = self.files(self.tmp / 'mine', {'save.dat': b'imported', 'sub/extra.bin': b'x'})
+        r = saves.import_save(self.game, src, log=lambda m: None)
+        self.assertEqual(r['files'], 2)
+        self.assertEqual((acct / 'save.dat').read_bytes(), b'imported')
+        self.assertEqual((acct / 'sub' / 'extra.bin').read_bytes(), b'x')
+        self.assertEqual(list(tx.iterdir()), [])                       # the game loads the imported save
+        self.assertEqual((r['backup'] / 'save.dat').read_bytes(), b'newer')   # the save the game would have loaded
+        self.assertTrue((self.game / 'saves' / 'README.txt').is_file())
+        self.assertTrue((src / 'save.dat').is_file())                  # a picked folder is left as it was
+
+    def test_import_from_the_saves_folder(self):
+        d = saves.ensure_saves_dir(self.game)
+        self.assertIsNone(saves.waiting(self.game)[0])                 # README.txt alone is no save
+        self.files(d, {'emu/0000000000000000/' + 'c' * 32 + '/0100F2C0115B6000/save.dat': b'emu'})
+        self.assertIsNotNone(saves.waiting(self.game)[0])
+        r = saves.import_save(self.game, log=lambda m: None)
+        self.assertIsNone(r['backup'])                                 # there was no save yet
+        self.assertEqual((saves.account_dir(self.game) / 'save.dat').read_bytes(), b'emu')
+        left = sorted(e.name for e in d.iterdir())
+        self.assertEqual(left[0], 'README.txt')
+        self.assertTrue(left[1].startswith('imported '))
+        self.assertIsNone(saves.waiting(self.game)[0])                 # not imported twice
+        self.files(d, {'save.dat': b'loose'})                          # files put straight into saves/
+        r = saves.import_save(self.game, log=lambda m: None)
+        self.assertEqual((saves.account_dir(self.game) / 'save.dat').read_bytes(), b'loose')
+        self.assertEqual((r['backup'] / 'save.dat').read_bytes(), b'emu')
+        self.assertIsNone(saves.waiting(self.game)[0])
+
+    def test_refusals(self):
+        acct = saves.account_dir(self.game)
+        self.files(acct, {'save.dat': b'1'})
+        with self.assertRaises(saves.SaveError):
+            saves.import_save(self.game, self.game / 'profile', log=lambda m: None)   # its own save
+        big = self.tmp / 'big'
+        big.mkdir()
+        for i in range(saves.MAX_FILES + 1):
+            (big / f'{i}.txt').write_bytes(b'')
+        with self.assertRaises(saves.SaveError):
+            saves.import_save(self.game, big, log=lambda m: None)
+        self.assertEqual((acct / 'save.dat').read_bytes(), b'1')      # nothing changed
+
+
 class IconTest(unittest.TestCase):
     def test_navi(self):
         try:
@@ -724,7 +943,7 @@ class WindowTest(Tmp):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],
                            cwd=ROOT, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('8 screens drawn', r.stdout)
+        self.assertIn('9 screens drawn', r.stdout)
 
 
 if __name__ == '__main__':

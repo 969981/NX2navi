@@ -294,8 +294,10 @@ def main():
     shutil.rmtree(out, ignore_errors=True)
     folder = out / 'NX2navi'
     t0 = time.time()
-    lock = json.loads(a.lock.read_text(encoding='utf-8')) if a.lock else toolchain.make_lock()
-    say(f'release {build}: toolchain lock with {len(lock["packages"])} packages')
+    lock = (json.loads(a.lock.read_text(encoding='utf-8')) if a.lock
+            else toolchain.make_lock(fast_repo=toolchain.FAST_REPO))
+    say(f'release {build}: toolchain lock with {len(lock["packages"])} packages'
+        + (f' (CLANG64 clang left out: {lock["fast_skipped"]})' if lock.get('fast_skipped') else ''))
     build_app(folder / 'app' / ver, ver, a.xlate, a.feed, lock, a.ffx)
     (folder / 'app' / 'current.txt').write_text(ver + '\n', encoding='utf-8')
     build_python(folder / 'python')
