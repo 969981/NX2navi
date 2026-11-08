@@ -1424,7 +1424,9 @@ static class AmpereLowering
         void AtomsPopcInc()
         {
             uint offset = _i.Bits(40, 24), ur = _i.Bits(64, 6);
-            if ((_i.W2 & ~0x3fu) != 0x0d000000u || _i.Bits(32, 8) != 0 || Dst != RZ || (offset & 3) != 0 || offset >= (1u << 22))
+            // Bits 78-79 (0xc000 of the mode word) are set in 8 of Ocarina 1.1.1's compute programs; with RZ as the
+            // destination no per-lane result is read, so the memory update is the same (local fix, 2026-11-08).
+            if ((_i.W2 & ~0xc03fu) != 0x0d000000u || _i.Bits(32, 8) != 0 || Dst != RZ || (offset & 3) != 0 || offset >= (1u << 22))
                 throw Fail("ATOMS.POPC.INC mode");
             int addr = Gpr(_i.Bits(24, 8));
             if (ur != 0x3f)
