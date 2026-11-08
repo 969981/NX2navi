@@ -22,13 +22,15 @@ STEPS = {
     'compile': ('Compile', 'Compiling the translated code and the port into a Windows program.'),
     'compile_changed': ('Compile Changed Files', 'Compiling the files this version changed. Files that did not '
                                                  'change are kept from the last build.'),
+    'shaders': ('Prepare the Shaders', "Translating every shader of the game ahead of time, so play does not stop to "
+                                       'compile them.'),
     'ready': ('Ready to Play', 'The game is built.'),
     'download': ('Download {ver}', 'Downloading the new version of NX2navi.'),
     'verify': ('Verify the Download', 'Checking the download against its checksum.'),
     'swap': ('Swap In the New Build', 'Linking the new build. It replaces the old one only once it is complete.'),
 }
 WEIGHTS = {'tools': 12, 'tools_update': 4, 'check': 1, 'exefs': 2, 'romfs': 14, 'lift': 14, 'compile': 55,
-           'compile_changed': 55, 'ready': 0, 'download': 8, 'verify': 1, 'swap': 6}
+           'compile_changed': 55, 'shaders': 18, 'ready': 0, 'download': 8, 'verify': 1, 'swap': 6}
 
 
 def mmss(seconds):
@@ -252,13 +254,15 @@ class InstallJob(Job):
     title = 'Installing'
 
     def __init__(self, ctx, dump, game_dir):
-        super().__init__(ctx, ['tools', 'check', 'exefs', 'romfs', 'lift', 'compile', 'ready'])
+        super().__init__(ctx, ['tools', 'check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'ready'])
         self.dump, self.game_dir = str(dump), str(game_dir)
 
     def run(self):
         self.ensure_tools('tools')
         self.make_game(build.install_args(self.ctx.layout, self.dump, self.game_dir),
-                       {s: s for s in ('check', 'exefs', 'romfs', 'lift', 'compile')})
+                       {s: s for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders')})
+        if self.step('shaders').state == PENDING:
+            self.skip('shaders')
         self.finish('ready', 'Ready')
         try:
             gamefiles.extract_fonts(self.ctx.layout, self.game_dir)
@@ -271,7 +275,7 @@ class RebuildJob(Job):
     title = 'Rebuilding'
 
     def __init__(self, ctx, game_dir, dump=''):
-        super().__init__(ctx, ['tools_update', 'lift', 'compile_changed', 'swap'])
+        super().__init__(ctx, ['tools_update', 'lift', 'compile_changed', 'swap', 'shaders'])
         self.game_dir, self.dump = str(game_dir), dump
 
     def run(self):
@@ -285,8 +289,8 @@ class RebuildJob(Job):
             args = build.install_args(layout, self.dump, self.game_dir)
         else:
             raise build.BuildError('the game folder has no earlier build: install the game again')
-        self.make_game(args, {'lift': 'lift', 'compile': 'compile_changed'}, link_step='swap')
-        for sid in ('lift', 'compile_changed', 'swap'):
+        self.make_game(args, {'lift': 'lift', 'compile': 'compile_changed', 'shaders': 'shaders'}, link_step='swap')
+        for sid in ('lift', 'compile_changed', 'swap', 'shaders'):
             if self.step(sid).state == PENDING:
                 self.skip(sid)
 
@@ -297,7 +301,7 @@ class UpdateDownloadJob(Job):
 
     def __init__(self, ctx, release):
         ver = versions.display(release.version)
-        super().__init__(ctx, ['download', 'verify', 'tools_update', 'lift', 'compile_changed', 'swap'], ver)
+        super().__init__(ctx, ['download', 'verify', 'tools_update', 'lift', 'compile_changed', 'swap', 'shaders'], ver)
         self.release, self.ver = release, ver
         self.title = f'Updating to {ver}'
 
@@ -327,7 +331,7 @@ class ContinueUpdateJob(RebuildJob):
     kind = 'update'
 
     def __init__(self, ctx, game_dir, old, dump=''):
-        Job.__init__(self, ctx, ['download', 'verify', 'tools_update', 'lift', 'compile_changed', 'swap'],
+        Job.__init__(self, ctx, ['download', 'verify', 'tools_update', 'lift', 'compile_changed', 'swap', 'shaders'],
                      ctx.layout.version)
         self.game_dir, self.dump, self.old = str(game_dir), dump, old
         self.title = f'Updating to {versions.display(ctx.layout.version)}'
@@ -339,7 +343,7 @@ class ContinueUpdateJob(RebuildJob):
             RebuildJob.run(self)
         else:
             self.ensure_tools('tools_update')
-            for sid in ('lift', 'compile_changed', 'swap'):
+            for sid in ('lift', 'compile_changed', 'swap', 'shaders'):
                 self.skip(sid, 'No game yet')
         updater.prune(self.ctx.layout)
 

@@ -647,7 +647,8 @@ class MakeGameTest(Tmp):
         sys.path.insert(0, str(self.layout.pydeps))   # the fake zbic
         saved = (self.mg.step_romfs, self.mg.step_lift, self.mg.step_compile, sys.argv)
         self.mg.step_romfs, self.mg.step_lift, self.mg.step_compile = romfs, lift, compile_
-        sys.argv = ['make_game.py', '--nup', str(self.nup), '--out', str(self.out), '--msys', str(self.msys)]
+        sys.argv = ['make_game.py', '--nup', str(self.nup), '--out', str(self.out), '--msys', str(self.msys),
+                    '--until', 'compile']   # the shaders step needs the shader translator
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.mg.main()
@@ -769,7 +770,7 @@ import json, sys, time
 def ev(**k): print('@@' + json.dumps(k), flush=True)
 if '--fail' in open(sys.argv[0] + '.mode').read():
     ev(ev='step', step='check', state='start'); ev(ev='error', message='this is not game version 1.1.1'); sys.exit(1)
-for s in ('check', 'exefs', 'romfs', 'lift', 'compile'):
+for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders'):
     ev(ev='step', step=s, state='start')
     if s == 'compile':
         ev(ev='progress', step=s, done=5, total=10, unit='files'); ev(ev='phase', step=s, phase='link')
@@ -803,7 +804,7 @@ class JobTest(Tmp):
         ctx = self.make_ctx('ok')
         j = jobs.InstallJob(ctx, self.tmp / 'g.nup', self.tmp / 'game').run_inline()
         self.assertEqual(j.result, 'ok', j.error)
-        self.assertEqual([s.state for s in j.steps], [jobs.SKIPPED] + [jobs.DONE] * 6)
+        self.assertEqual([s.state for s in j.steps], [jobs.SKIPPED] + [jobs.DONE] * 7)   # tools ... shaders, ready
         self.assertEqual(j.step('check').value, 'Version 1.1.1')
         self.assertTrue(any('working on lift' in ln for ln in j.lines))
         self.assertEqual(j.overall(), 1.0)

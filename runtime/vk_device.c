@@ -10,6 +10,10 @@
 #include "vk.h"
 #include "platform/platform.h"
 #include "vk_dlaa.h"
+#include "vk_fg.h"
+#include "vk_dlssg.h"
+
+static uint32_t g_gfx_queues = 1;   // queues the graphics family offers (pick_device)
 
 static VkCtx g_vk;
 static int g_ready;
@@ -66,6 +70,7 @@ static void mesa_cache_beside_exe(void) {
 }
 
 static int create_instance(void) {
+    vk_dlssg_early();   // DLSS Frame Generation: Streamline before any Vulkan call of the process (its slInit asks so)
     mesa_cache_beside_exe();
     const char *ext[12];
     uint32_t n_ext = (uint32_t)gfx_window_vk_extensions(ext, 7);
@@ -75,7 +80,9 @@ static int create_instance(void) {
         rt_log("vk: NX2NAVI_VK_VALIDATION set but %s is not installed; continuing without", layers[0]);
         validate = 0;
     }
-    if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    // DLSS Frame Generation: Streamline's plugins call its naming functions even when they say it is off
+    if (validate || (vk_dlssg_wanted() && instance_ext_present(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)))
+        ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     if (vk_hdr_wanted() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))   // HDR10 surface formats
         ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
     vk_dlaa_instance_exts(ext, &n_ext, 12);
@@ -85,7 +92,7 @@ static int create_instance(void) {
                                .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext,
                                .enabledLayerCount = validate ? 1 : 0, .ppEnabledLayerNames = layers};
     rdoc_init();
-    VkResult r = vkCreateInstance(&ci, NULL, &g_vk.instance);
+    VkResult r = vk_dlssg_create_instance(&ci, &g_vk.instance);
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateInstance failed (%d); is a Vulkan 1.3 driver installed?", (int)r); return 0; }
     g_vk.validation = validate;
     if (validate) {
@@ -138,19 +145,21 @@ static int name_has(const char *s, const char *sub) {
 // NX2NAVI_GPU_NAME (case-insensitive part of the name) overrides.
 static int pick_device(void) {
     uint32_t n = 0;
-    vkEnumeratePhysicalDevices(g_vk.instance, &n, NULL);
+    vk_dlssg_enumerate(g_vk.instance, &n, NULL);
     if (!n) { rt_log("vk: no Vulkan device"); return 0; }
     VkPhysicalDevice *pd = calloc(n, sizeof *pd);
-    vkEnumeratePhysicalDevices(g_vk.instance, &n, pd);
+    vk_dlssg_enumerate(g_vk.instance, &n, pd);
     const char *e = cfg_get("NX2NAVI_GPU_INDEX");   // no fixed default: the best device when unset
     int want = e && *e ? atoi(e) : -1;
     const char *name = cfg_get("NX2NAVI_GPU_NAME");
-    int best = -1, best_score = -1;
+    int best = -1, best_score = -1, listed = 0;
+retry:
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(pd[i], &p);
-        rt_log("vk: gpu %u: %s (type %d, api %u.%u.%u)", i, p.deviceName, (int)p.deviceType, VK_API_VERSION_MAJOR(p.apiVersion),
-               VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion));
+        if (!listed)
+            rt_log("vk: gpu %u: %s (type %d, api %u.%u.%u)", i, p.deviceName, (int)p.deviceType,
+                   VK_API_VERSION_MAJOR(p.apiVersion), VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion));
         if (want >= 0 && (int)i != want) continue;
         if (name && *name && !name_has(p.deviceName, name)) continue;
         if (p.apiVersion < VK_API_VERSION_1_3) { rt_log("vk: gpu %u skipped: Vulkan below 1.3", i); continue; }
@@ -167,10 +176,16 @@ static int pick_device(void) {
                   : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
         if (score > best_score) { best_score = score; best = (int)i; }
     }
+    // A chosen GPU that is not usable or no longer there (the menu's GPU row, an unplugged card, a driver that lists the
+    // devices in another order): the best usable one instead, so the game still starts and the choice can be changed
+    if (best < 0 && (want >= 0 || (name && *name))) {
+        if (want >= 0) rt_log("vk: NX2NAVI_GPU_INDEX=%d is not usable (see above): the best usable gpu instead", want);
+        else rt_log("vk: no usable gpu matches NX2NAVI_GPU_NAME=%s (see above): the best usable gpu instead", name);
+        want = -1, name = NULL, listed = 1;
+        goto retry;
+    }
     if (best < 0) {
-        if (want >= 0) rt_log("vk: NX2NAVI_GPU_INDEX=%d is not usable (see above)", want);
-        else if (name && *name) rt_log("vk: no usable gpu matches NX2NAVI_GPU_NAME=%s (see above)", name);
-        else rt_log("vk: no device with Vulkan 1.3 and the required extensions (see above)");
+        rt_log("vk: no device with Vulkan 1.3 and the required extensions (see above)");
         free(pd);
         return 0;
     }
@@ -184,6 +199,7 @@ static int pick_device(void) {
     VkQueueFamilyProperties *qp = calloc(nq ? nq : 1, sizeof *qp);
     vkGetPhysicalDeviceQueueFamilyProperties(g_vk.phys, &nq, qp);
     g_vk.gfx_family = find_gfx_family(g_vk.phys, qp, nq);
+    g_gfx_queues = qp[g_vk.gfx_family].queueCount;
     g_vk.xfer_family = g_vk.gfx_family;
     for (uint32_t i = 0; i < nq; i++)   // a family that does transfer only (async DMA engine)
         if ((qp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) && !(qp[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))) {
@@ -224,7 +240,7 @@ static int create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne ? ne : 1, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[48];
+    const char *ext[64];
     uint32_t n_ext = 0;
     for (size_t i = 0; i < sizeof k_required_ext / sizeof *k_required_ext; i++) ext[n_ext++] = k_required_ext[i];
 
@@ -263,7 +279,22 @@ static int create_device(void) {
         CHAIN(fbl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_FEATURES_EXT);
         CHAIN(lr, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR);
     }
-    vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40);   // NGX's; the eight slots after it stay for the seven below
+    vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40);   // NGX's; the eight slots after it stay for the eight below
+    // FSR 3.1 (vk_ffx.cpp): its Vulkan back end looks vkGetBufferMemoryRequirements2KHR up by that name, which resolves
+    // only with the extension enabled (the core function has no suffix); without it the back end called address 0
+    if ((vk_dlaa_fsr3() || vk_fg_wanted() || vk_dlssg_wanted()) && has_ext(ep, ne, VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME))
+        ext[n_ext++] = VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME;
+    // DLSS Frame Generation (vk_dlssg.c): Streamline's plugins look functions of extensions core in Vulkan 1.3 up by
+    // their suffixed names too, which resolve only with the extension itself enabled
+    if (vk_dlssg_wanted()) {
+        static const char *const promoted[] = {VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+                                               VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+                                               VK_KHR_BIND_MEMORY_2_EXTENSION_NAME, VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
+                                               VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME, VK_KHR_MAINTENANCE_1_EXTENSION_NAME,
+                                               VK_KHR_MAINTENANCE_2_EXTENSION_NAME, VK_KHR_MAINTENANCE_3_EXTENSION_NAME};
+        for (size_t i = 0; i < sizeof promoted / sizeof *promoted && n_ext < 56; i++)
+            if (has_ext(ep, ne, promoted[i])) ext[n_ext++] = promoted[i];
+    }
     if (has_ext(ep, ne, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) { g_vk.has_memory_budget = 1; ext[n_ext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME; }
     // GPU timestamps on the CPU clock (vk_sync.c): the perf line splits GPU idle time into waiting for a submission or not.
     if (has_ext(ep, ne, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) { g_vk.has_calibrated = 2; ext[n_ext++] = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME; }
@@ -336,22 +367,31 @@ static int create_device(void) {
                has_fbl && c->fbl.attachmentFeedbackLoopLayout, has_lr && c->lr.dynamicRenderingLocalRead);
     }
 
-    float prio = 1.0f;
+    // Frame generation (vk_fg.cpp) presents on a second queue of the graphics family and acquires on a third
+    static const float prio[3] = {1.0f, 1.0f, 1.0f};
+    uint32_t nq_gfx = vk_fg_queue_count() < g_gfx_queues ? vk_fg_queue_count() : g_gfx_queues;
     VkDeviceQueueCreateInfo qi[2] = {
-        {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.gfx_family, .queueCount = 1,
-         .pQueuePriorities = &prio}};
+        {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.gfx_family, .queueCount = nq_gfx,
+         .pQueuePriorities = prio}};
     uint32_t nqi = 1;
     if (g_vk.xfer_family != g_vk.gfx_family) {
         qi[1] = (VkDeviceQueueCreateInfo){.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-                                          .queueFamilyIndex = g_vk.xfer_family, .queueCount = 1, .pQueuePriorities = &prio};
+                                          .queueFamilyIndex = g_vk.xfer_family, .queueCount = 1, .pQueuePriorities = prio};
         nqi = 2;
     }
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &c->f2, .queueCreateInfoCount = nqi,
                              .pQueueCreateInfos = qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
-    VkResult r = vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.device);
+    VkResult r = vk_dlssg_create_device(g_vk.instance, g_vk.phys, &di, &g_vk.device);
     free(c);
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateDevice failed (%d)", (int)r); return 0; }
+    vk_dlssg_device_ready(g_vk.device);
     vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, 0, &g_vk.gfx_queue);
+    if (nq_gfx >= 2) {
+        VkQueue present, acquire;
+        vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, 1, &present);
+        vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, nq_gfx - 1, &acquire);
+        vk_fg_queues(present, acquire);
+    }
     if (g_vk.xfer_family != g_vk.gfx_family) vkGetDeviceQueue(g_vk.device, g_vk.xfer_family, 0, &g_vk.xfer_queue);
     else { g_vk.xfer_queue = g_vk.gfx_queue; g_vk.xfer_shared = 1; }
 

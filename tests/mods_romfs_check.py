@@ -152,7 +152,7 @@ def main():
         put(mods, UNI, p2, b'mod-G')
         # a file of another game version's (no RomFS has a Product.999 table): counted, never served
         put(mods, 'Low', 'System/Resource/ResourceSizeTable.Product.999.rsizetable.zs', b'mod-H')
-        put(mods, 'Lite', 'Lite/added.bin', b'mod-I', part='romfslite')   # TKMM's romfslite folder
+        put(mods, 'Lite', 'Lite/added.bin', b'mod-I', part='romfslite')   # a mod manager's romfslite folder
 
         code, log = run(args.exe, mods, f'Top|Low|{UNI}|Case')
         check(code == 0, 'probe-fs passes with five mods (served bytes equal the winners\' files)', log)

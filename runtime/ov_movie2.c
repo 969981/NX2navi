@@ -36,6 +36,7 @@
 #include "cfg.h"
 #include "gfx.h"
 #include "host.h"
+#include "nvn_api.h"
 #include "platform/platform.h"
 
 #define R_NO_FRAME 0x7bu
@@ -345,6 +346,12 @@ static void decoder_thread(void *arg) {
         update_events(v);
         plat_mutex_unlock(&v->lock);
         plat_mutex_lock(&v->codec);
+        // a flush (ov_flush) between taking the sample and the codec: the sample belongs to the stream before it, and fed
+        // into the flushed decoder its picture would come out after the seek
+        plat_mutex_lock(&v->lock);
+        int stale = v->generation != gen;
+        plat_mutex_unlock(&v->lock);
+        if (stale) s.size = 0, s.eos = 0;
         if (v->dav1d && s.data && s.size) {
             Dav1dData d = {0};
             uint8_t *p = dav1d_data_create(&d, s.size);
@@ -586,6 +593,10 @@ static void ov_acquire(Cpu *c) {
     uint64_t ysz = (uint64_t)p.w * p.h, uvsz = ysz / 2;
     if (p.nv12 && buf && cap >= ysz + uvsz) {
         memcpy(buf, p.nv12, (size_t)(ysz + uvsz));
+        // The game's YUV pass reads this buffer on the GPU. A host write into pool storage is one the page write
+        // tracking may not see in time (a mirror or texture over it kept its older or still-empty bytes: frames
+        // with stripes of zeros, which NV12 shows as green), so the back end is told directly.
+        nvn_guest_written((uint64_t)(uintptr_t)buf, ysz + uvsz);
         uint64_t uvp = (uint64_t)(uintptr_t)(buf + ysz);
         memcpy(fr + 0x10, &uvp, 8);
         memcpy(fr + 0x28, &ysz, 8), memcpy(fr + 0x30, &uvsz, 8);

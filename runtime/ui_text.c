@@ -46,7 +46,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ON] = "On", [UI_MENU_OFF] = "Off", [UI_MENU_AUTO] = "Automatic", [UI_MENU_DEFAULT_MARK] = "default",
     [UI_MENU_AFTER_RESTART] = "after restart", [UI_MENU_SET_BY_ENV] = "set by environment variable",
     [UI_MENU_SAVE_FAILED] = "could not save settings",
-    [UI_MENU_VERSION] = "Ocarina Recomp %s, game %s",
+    [UI_MENU_VERSION] = "NX2navi %s, game %s",
 
     [UI_MENU_FULLSCREEN] = "Fullscreen", [UI_MENU_FULLSCREEN_DESC] = "Fills the screen with the game; F11 toggles it.",
     [UI_MENU_WINDOW_SIZE] = "Window size", [UI_MENU_WINDOW_SIZE_DESC] = "Size of the game window when not fullscreen.",
@@ -100,7 +100,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SHARPNESS] = "FSR sharpness",
     [UI_MENU_SHARPNESS_DESC] = "Sharpening after FSR scaling, also when the picture is shrunk to the window; 0 turns it "
                                "off.",
-    [UI_MENU_SHARPNESS_NEEDS_FSR] = "only with AMD FSR 1",
+    [UI_MENU_SHARPNESS_NEEDS_FSR] = "only with AMD FSR 1 or FSR 3.1",
     [UI_MENU_COLOR] = "Colour",
     [UI_MENU_COLOR_PRESET] = "Colour profile",
     [UI_MENU_COLOR_PRESET_DESC] = "Sets the four values below. Vivid: more contrast and saturation, shadows opened a "
@@ -119,8 +119,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_HDR_GROUP] = "HDR",
     [UI_MENU_HDR] = "HDR output",
     [UI_MENU_HDR_DESC] = "Bright highlights on an HDR display. Needs HDR turned on in Windows (\"Use HDR\") or in a "
-                         "Wayland compositor with colour management; without it the picture stays SDR. Applies after a "
-                         "restart. The colour profile above is for SDR and is not used in HDR.",
+                         "Wayland compositor with colour management; without it the picture stays SDR. Native: the "
+                         "game's own HDR, as on a Switch 2 on an HDR TV. Enhanced: the game's picture with its highlights "
+                         "kept above the SDR white. Applies after a restart. The colour profile above is for SDR and is "
+                         "not used in HDR.",
     [UI_MENU_HDR_PEAK] = "Peak brightness",
     [UI_MENU_HDR_PEAK_DESC] = "Your display's peak in nits; the brightest highlights stop there.",
     [UI_MENU_HDR_GAME] = "Game brightness",
@@ -165,7 +167,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_DESC] = "DLAA draws the 3D scene at full resolution. Quality, Balanced, Performance and Ultra "
                           "Performance draw it at 67, 58, 50 and 33 % and let DLSS scale it up, which saves GPU time; "
                           "they replace the 3D render scale. Takes effect at once.",
-    [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
+    [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_FSR3_NATIVE] = "Native AA", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
     [UI_MENU_DLSS_PERFORMANCE] = "Performance", [UI_MENU_DLSS_ULTRA] = "Ultra Performance",
     [UI_MENU_FXAA] = "Game anti-aliasing (FXAA)",
     [UI_MENU_FXAA_DESC] = "The game's own FXAA edge smoothing. It blurs fine detail a little; with DLAA on it is not needed.",
@@ -197,7 +199,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
 
     [UI_MENU_MODS_BUILTIN] = "Built into the port", [UI_MENU_MODS_INSTALLED] = "Installed mods",
     [UI_MENU_MODS_NONE] = "No mods yet. Unpack a mod into the mods folder, one folder per mod with its romfs folder "
-                          "inside, and restart the game. TKMM can export its merged mods into a folder there too.",
+                          "inside, and restart the game. A mod manager can export its merged mods into a folder there too.",
     [UI_MENU_MODS_OPEN] = "Open mods folder",
     [UI_MENU_MODS_OPEN_DESC] = "Shows the folder the game loads mods from. It is created if it is missing.",
     [UI_MENU_MODS_ROW_DESC] = "Game files it replaces: %u. New files it adds: %u.",
@@ -463,7 +465,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
 
     [UI_MENU_OV_FPS] = "%.0f FPS", [UI_MENU_OV_FRAME_MS] = "%.1f ms", [UI_MENU_OV_GAME_PCT] = "game %.0f%%",
     [UI_MENU_OV_MAX_MS] = "max %.1f ms",
-    [UI_MENU_OV_FPS_LABEL] = "FPS", [UI_MENU_OV_FRAME_LABEL] = "Frame", [UI_MENU_OV_FMT_FPS] = "%.0f",
+    [UI_MENU_OV_FPS_LABEL] = "FPS", [UI_MENU_OV_FG_LABEL] = "FG", [UI_PERF_LINE_FPS_FG] = "%.0f fps (%.0f frame gen)",
+    [UI_MENU_OV_FRAME_LABEL] = "Frame", [UI_MENU_OV_FMT_FPS] = "%.0f",
     [UI_MENU_OV_LOW1] = "1%% low %.0f", [UI_MENU_OV_LOW01] = "0.1%% low %.0f",
     [UI_MENU_OV_GPU] = "GPU", [UI_MENU_OV_CPU] = "CPU", [UI_MENU_OV_RAM] = "RAM", [UI_MENU_OV_VRAM] = "VRAM",
     [UI_MENU_OV_TEMP] = "Temperature", [UI_MENU_OV_POWER] = "Power", [UI_MENU_OV_CLOCK] = "Clock",
@@ -508,9 +511,23 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                "NVIDIA DLSS (RTX GPUs; " DLSS_FILE " next to the game's .exe) renders the 3D scene at "
                                "its mode's share of the picture and scales it up with NVIDIA's newest model for the mode: "
                                "DLAA 100 %, Quality 67 %, Balanced 58 %, Performance 50 %, Ultra Performance 33 %. The "
-                               "HUD is not touched. Turning DLSS on or off takes effect after a restart; the mode changes "
-                               "at once.",
-    [UI_MENU_UPSCALING_DLSS_NOTE] = "DLSS on or off: after restart",
+                               "HUD is not touched. AMD FSR 3.1 (any GPU; amd_fidelityfx_vk.dll next to the game's .exe) "
+                               "works the same way, with Native AA at 100 % and the same shares for its other modes. "
+                               "Turning DLSS or FSR 3.1 on or off, or changing between them, takes effect after a "
+                               "restart; the mode changes at once.",
+    [UI_MENU_UPSCALING_DLSS_NOTE] = "DLSS or FSR 3.1 on or off: after restart",
+    [UI_MENU_FRAMEGEN] = "Frame generation",
+    [UI_MENU_FRAMEGEN_DESC] = "Shows a generated frame between every two the game draws, for about twice the frame rate "
+                              "on a fast display. It needs DLSS or FSR 3.1 under Upscaling (any mode), whose motion "
+                              "vectors it uses. AMD FSR 3.1 frame generation runs on any GPU (amd_fidelityfx_vk.dll next "
+                              "to the game's .exe); NVIDIA DLSS frame generation needs an RTX 40 or 50 GPU and "
+                              "NVIDIA's Streamline files next to the .exe. It pauses while this menu is open. Takes "
+                              "effect after a restart.",
+    [UI_MENU_FRAMEGEN_OFF] = "Off",
+    [UI_MENU_HDR_NOTE] = "after restart",
+    [UI_MENU_HDR_ENHANCED] = "Enhanced", [UI_MENU_HDR_NATIVE] = "Native (the game's)",
+    [UI_MENU_FRAMEGEN_NOTE] = "after restart; needs DLSS or FSR 3.1",
+    [UI_MENU_FRAMEGEN_NEEDS] = "choose a DLSS or FSR 3.1 mode under Upscaling first",
     [UI_MENU_GAME_RES] = "Resolution",
     [UI_MENU_GAME_RES_DESC] = "The height of the game's picture: 1440p is the game's own; higher draws a sharper picture "
                               "and its scene in proportion, at a matching cost on the graphics card. Native: the "
@@ -541,7 +558,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "по умолчанию",
     [UI_MENU_AFTER_RESTART] = "после перезапуска", [UI_MENU_SET_BY_ENV] = "задано переменной окружения",
     [UI_MENU_SAVE_FAILED] = "не удалось сохранить настройки",
-    [UI_MENU_VERSION] = "Ocarina Recomp %s, игра %s",
+    [UI_MENU_VERSION] = "NX2navi %s, игра %s",
 
     [UI_MENU_FULLSCREEN] = "Полный экран", [UI_MENU_FULLSCREEN_DESC] = "Игра на весь экран; F11 переключает режим.",
     [UI_MENU_WINDOW_SIZE] = "Размер окна", [UI_MENU_WINDOW_SIZE_DESC] = "Размер окна игры вне полноэкранного режима.",
@@ -693,7 +710,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
 
     [UI_MENU_MODS_BUILTIN] = "Встроенные в порт", [UI_MENU_MODS_INSTALLED] = "Установленные моды",
     [UI_MENU_MODS_NONE] = "Модов пока нет. Распакуйте мод в папку mods, каждый мод в свою папку с папкой romfs внутри, и "
-                          "перезапустите игру. TKMM тоже может выгрузить туда объединённые моды отдельной папкой.",
+                          "перезапустите игру. Менеджер модов тоже может выгрузить туда объединённые моды отдельной папкой.",
     [UI_MENU_MODS_OPEN] = "Открыть папку модов",
     [UI_MENU_MODS_OPEN_DESC] = "Показывает папку, из которой игра загружает моды. Если её нет, она будет создана.",
     [UI_MENU_MODS_ROW_DESC] = "Заменяет файлов игры: %u. Добавляет новых файлов: %u.",
@@ -1023,7 +1040,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_TAB_MODS] = "Mods",
     [UI_MENU_MODS_BUILTIN] = "Embutidos no port", [UI_MENU_MODS_INSTALLED] = "Mods instalados",
     [UI_MENU_MODS_NONE] = "Nenhum mod ainda. Descompacte um mod na pasta mods, uma pasta por mod com a pasta romfs dentro, "
-                          "e reinicie o jogo. O TKMM também pode exportar os mods mesclados para uma pasta ali.",
+                          "e reinicie o jogo. Um gerenciador de mods também pode exportar os mods mesclados para uma pasta ali.",
     [UI_MENU_MODS_OPEN] = "Abrir pasta de mods",
     [UI_MENU_MODS_OPEN_DESC] = "Mostra a pasta de onde o jogo carrega os mods. Ela é criada se não existir.",
     [UI_MENU_MODS_ROW_DESC] = "Arquivos do jogo que substitui: %u. Arquivos novos que adiciona: %u.",
@@ -1056,7 +1073,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "padrão",
     [UI_MENU_AFTER_RESTART] = "após reiniciar", [UI_MENU_SET_BY_ENV] = "definido por variável de ambiente",
     [UI_MENU_SAVE_FAILED] = "não foi possível salvar as configurações",
-    [UI_MENU_VERSION] = "Ocarina Recomp %s, jogo %s",
+    [UI_MENU_VERSION] = "NX2navi %s, jogo %s",
 
     [UI_MENU_FULLSCREEN] = "Tela cheia", [UI_MENU_FULLSCREEN_DESC] = "O jogo ocupa a tela inteira; F11 alterna.",
     [UI_MENU_WINDOW_SIZE] = "Tamanho da janela",
@@ -1540,7 +1557,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_TAB_MODS] = "模组",
     [UI_MENU_MODS_BUILTIN] = "移植版内置", [UI_MENU_MODS_INSTALLED] = "已安装的模组",
     [UI_MENU_MODS_NONE] = "还没有模组。把模组解压到 mods 文件夹，每个模组一个文件夹，里面放 romfs 文件夹，然后重启游戏。"
-                          "TKMM 也可以把合并后的模组导出到那里的一个文件夹。",
+                          "模组管理器也可以把合并后的模组导出到那里的一个文件夹。",
     [UI_MENU_MODS_OPEN] = "打开模组文件夹",
     [UI_MENU_MODS_OPEN_DESC] = "显示游戏加载模组的文件夹。不存在时会创建它。",
     [UI_MENU_MODS_ROW_DESC] = "替换的游戏文件：%u。新增的文件：%u。",
@@ -1570,7 +1587,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_AFTER_RESTART] = "重启后生效",
     [UI_MENU_SET_BY_ENV] = "由环境变量设定",
     [UI_MENU_SAVE_FAILED] = "无法保存设置",
-    [UI_MENU_VERSION] = "Ocarina Recomp %s，游戏 %s",
+    [UI_MENU_VERSION] = "NX2navi %s，游戏 %s",
     [UI_MENU_FULLSCREEN] = "全屏",
     [UI_MENU_FULLSCREEN_DESC] = "游戏铺满屏幕；按 F11 切换。",
     [UI_MENU_WINDOW_SIZE] = "窗口大小",

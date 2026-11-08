@@ -681,6 +681,32 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ILLEGAL_INSTRUCTION)
         raw_note("crash_veh", code, (uintptr_t)ep->ContextRecord->Rip,
                  ep->ExceptionRecord->NumberParameters >= 2 ? (uintptr_t)ep->ExceptionRecord->ExceptionInformation[1] : 0);
+    if (code == EXCEPTION_ACCESS_VIOLATION && !ep->ContextRecord->Rip) {
+        // a call through a null pointer: the call's return address is on top of the stack, in whichever module made it
+        const uintptr_t *sp = (const uintptr_t *)ep->ContextRecord->Rsp;
+        for (int i = 0; i < 4; i++) {
+            void *base = NULL;
+            if (!RtlPcToFileHeader((void *)sp[i], &base) || !base) continue;
+            char b[200];
+            int n = snprintf(b, sizeof b, "[host] crash_veh: called from %s+%#llx (stack word %d)\n", image_name(base),
+                             (unsigned long long)(sp[i] - (uintptr_t)base), i);
+            DWORD w;
+            if (n > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), b, (DWORD)n, &w, NULL);
+        }
+        // the caller's registers (the object a call through a table read its pointer from is often one of them)
+        const CONTEXT *x = ep->ContextRecord;
+        char b[600];
+        int n = snprintf(b, sizeof b,
+                         "[host] crash_veh: rax %#llx rbx %#llx rcx %#llx rdx %#llx rsi %#llx rdi %#llx rbp %#llx r8 %#llx "
+                         "r9 %#llx r12 %#llx r13 %#llx r14 %#llx r15 %#llx\n",
+                         (unsigned long long)x->Rax, (unsigned long long)x->Rbx, (unsigned long long)x->Rcx,
+                         (unsigned long long)x->Rdx, (unsigned long long)x->Rsi, (unsigned long long)x->Rdi,
+                         (unsigned long long)x->Rbp, (unsigned long long)x->R8, (unsigned long long)x->R9,
+                         (unsigned long long)x->R12, (unsigned long long)x->R13, (unsigned long long)x->R14,
+                         (unsigned long long)x->R15);
+        DWORD w;
+        if (n > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), b, (DWORD)n, &w, NULL);
+    }
     const char *what = code == EXCEPTION_ACCESS_VIOLATION ? "access violation"
                      : code == EXCEPTION_ILLEGAL_INSTRUCTION ? "illegal instruction"
                      : code == EXCEPTION_INT_DIVIDE_BY_ZERO ? "integer division by zero"
@@ -1706,7 +1732,18 @@ int plat_child_write(PlatChild *c, const void *data, size_t n) {
     return WriteFile(c->in, data, (DWORD)n, &put, NULL) && put == n;
 }
 
+// A child that stays alive but never answers (a translator stuck on one program) used to block the reader for good,
+// and with it the draw or dispatch waiting for that shader: after PLAT_CHILD_READ_MS without a byte the read fails,
+// and the caller stops the child (gfx_shader.c svc_request). The pipe is anonymous, so readiness is polled.
 long plat_child_read(PlatChild *c, void *buf, size_t cap) {
+    ULONGLONG t0 = GetTickCount64();
+    for (unsigned spins = 0;; spins++) {
+        DWORD avail = 0;
+        if (!PeekNamedPipe(c->out, NULL, 0, NULL, &avail, NULL)) return -1;   // broken: the child exited
+        if (avail) break;
+        if (GetTickCount64() - t0 > PLAT_CHILD_READ_MS) return -1;
+        Sleep(spins < 50 ? 0 : 1);
+    }
     DWORD got = 0;
     if (!ReadFile(c->out, buf, (DWORD)cap, &got, NULL)) return -1;
     return (long)got;

@@ -1,6 +1,7 @@
 """Build a release of the NX2navi launcher (docs/launcher.md, "Releases").
 
-    python tools/make_launcher.py --xlate build/xlate [--out build/launcher-release] [--feed owner/name]
+    python tools/make_launcher.py --xlate build/xlate [--ffx amd_fidelityfx_vk.dll] [--out build/launcher-release]
+                                  [--feed owner/name]
                                   [--notes notes.md] [--publish]
 
 Needs Python 3.14 (tarfile and zstd for the MSYS2 packages), uv on PATH, network access on the first run, and
@@ -15,9 +16,10 @@ The release folder (--out) holds:
       python/                     python.org's embeddable Python 3.14.9, tkinter and Tcl/Tk 9.0 from its tcltk.msi,
                                   the packages of tools/requirements-launcher.txt, runtime-id.txt
       app/current.txt, app/<version>/   launcher/ (without native/), runtime/, recomp/, the tools make_game.py uses,
-                                  bin/nx2navi_xlate.exe and .id, lib/libnx2navirt.a (the runtime, prebuilt with the
-                                  release's compiler), toolchain.lock.json (the MSYS2 packages of today, pinned),
-                                  feed.json, VERSION, the licence files
+                                  bin/nx2navi_xlate.exe and .id (and amd_fidelityfx_vk.dll with --ffx),
+                                  lib/libnx2navirt.a (the runtime, prebuilt with the release's compiler),
+                                  toolchain.lock.json (the MSYS2 packages of today, pinned), feed.json, VERSION, the
+                                  licence files
     NX2navi-Setup-<version>.exe   launcher/native/setup.c with the folder above appended as a zip: the one file
                                   players download
     NX2navi-app-<version>.zip     app/<version> alone: what the launcher downloads to update itself
@@ -56,7 +58,8 @@ PINS = {
     'tcltk': (f'https://www.python.org/ftp/python/{PY_VERSION}/amd64/tcltk.msi',
               'ac87609db3f715404dd41a989c2f1706ea1512f3d86217f938d11c63af8eb505'),
 }
-TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostmem.py')
+TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostmem.py', 'prepare_shaders.py',
+         'shader_census.py', 'shader_list.py', 'zstd_compat.py')
 TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2navi.ini.example')
 SKIP_DIRS = {'__pycache__', '.pytest_cache', 'native'}
 SKIP_SUFFIXES = {'.o', '.obj', '.pyc', '.exe', '.dll', '.a', '.lib'}
@@ -151,7 +154,7 @@ def build_python(py):
 
 # ---------------------------------------------------------------- app/<version>/
 
-def build_app(app, ver, xlate, feed_repo, lock):
+def build_app(app, ver, xlate, feed_repo, lock, ffx=None):
     copy_tree(ROOT / 'launcher', app / 'launcher')
     for d in ('runtime', 'recomp'):
         copy_tree(ROOT / d, app / d)
@@ -167,6 +170,8 @@ def build_app(app, ver, xlate, feed_repo, lock):
         if not (xlate / n).is_file():
             sys.exit(f'{xlate / n} is missing: build the shader translator first (tools/build_xlate.py)')
         shutil.copy2(xlate / n, app / 'bin' / n)
+    if ffx:   # FSR 3.1 loads it from beside the game (runtime/vk_ffx.cpp); make_game.py copies it there
+        shutil.copy2(ffx, app / 'bin' / 'amd_fidelityfx_vk.dll')
     (app / 'toolchain.lock.json').write_text(json.dumps(lock, indent=1), encoding='utf-8')
     (app / 'feed.json').write_text(json.dumps({'type': 'github', 'repo': feed_repo}, indent=1), encoding='utf-8')
 
@@ -222,7 +227,9 @@ def build_native(work, cc, windres):
     (work / 'nx2navi.ico').write_bytes(art.navi_ico())
     shutil.copy2(ROOT / 'launcher' / 'native' / 'app.manifest', work / 'app.manifest')
     res = work / 'res.o'
-    run([*windres, '-I', work, ROOT / 'launcher' / 'native' / 'res.rc', '-O', 'coff', '-o', res])
+    # windres preprocesses with the gcc it finds on PATH: the toolchain's own bin first (no MSYS2 shell sets it)
+    env = dict(os.environ, PATH=str(Path(windres[0]).parent) + os.pathsep + os.environ.get('PATH', ''))
+    run([*windres, '-I', work, ROOT / 'launcher' / 'native' / 'res.rc', '-O', 'coff', '-o', res], env=env)
     flags = ['-municode', '-mwindows', '-O2', '-Wall', '-static', '-s']
     stub = work / 'NX2navi.exe'
     setup = work / 'setup-stub.exe'
@@ -267,6 +274,7 @@ def entry(path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--xlate', type=Path, required=True, help='folder with nx2navi_xlate.exe and nx2navi_xlate.id')
+    ap.add_argument('--ffx', type=Path, help="AMD's signed amd_fidelityfx_vk.dll (FidelityFX SDK 1.1.4, MIT) for FSR 3.1")
     ap.add_argument('--out', type=Path, default=MAIN_ROOT / 'build' / 'launcher-release')
     ap.add_argument('--feed', default=DEFAULT_FEED, help='the GitHub repository the launcher looks for releases in')
     ap.add_argument('--notes', type=Path, help='release notes (markdown) for the manifest and the GitHub release')
@@ -290,7 +298,7 @@ def main():
             else toolchain.make_lock(fast_repo=toolchain.FAST_REPO))
     say(f'release {build}: toolchain lock with {len(lock["packages"])} packages'
         + (f' (CLANG64 clang left out: {lock["fast_skipped"]})' if lock.get('fast_skipped') else ''))
-    build_app(folder / 'app' / ver, ver, a.xlate, a.feed, lock)
+    build_app(folder / 'app' / ver, ver, a.xlate, a.feed, lock, a.ffx)
     (folder / 'app' / 'current.txt').write_text(ver + '\n', encoding='utf-8')
     build_python(folder / 'python')
     cc, windres = native_compiler(lock)

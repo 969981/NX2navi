@@ -101,9 +101,12 @@ static int change_open(int want) {
 static void set_open(int open) { change_open(open); }
 
 static int g_failed_flag();
+// The boot screen is up (menu_boot_set): the menu does not open, as it would not be drawn while its keys queued up and
+// changed settings once the game ran.
+static std::atomic<int> g_booting{0};
 extern "C" int menu_is_open(void) { return g_open.load(std::memory_order_relaxed); }
 extern "C" void menu_toggle(void) {
-    if (!g_failed_flag()) change_open(-1);
+    if (!g_failed_flag() && !g_booting.load(std::memory_order_acquire)) change_open(-1);
 }
 
 // ---- events from the window adapter, queued while the menu is open; the present path hands them to ImGui
@@ -731,24 +734,61 @@ static void row_upscaling(void) {
     static const char *const modes[] = {"dlaa", "quality", "balanced", "performance", "ultra_performance"};
     static const UiTextId mode_names[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                           UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
-    static char dl[5][96];
-    const char *names[7] = {menu_text(UI_MENU_UPSCALER_BILINEAR), menu_text(UI_MENU_UPSCALER_FSR)};
+    // FSR 3.1's modes take the same render scales as DLSS's (Native AA is FSR's name for DLAA's full size)
+    static const UiTextId fsr_names[] = {UI_MENU_FSR3_NATIVE, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
+                                         UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
+    static char dl[10][96];
+    const char *names[12] = {menu_text(UI_MENU_UPSCALER_BILINEAR), menu_text(UI_MENU_UPSCALER_FSR)};
     for (int i = 0; i < 5; i++) {
         snprintf(dl[i], sizeof dl[i], i ? "DLSS %s" : "NVIDIA %s", menu_text(mode_names[i]));
-        names[2 + i] = dl[i];
+        snprintf(dl[5 + i], sizeof dl[5 + i], "AMD FSR 3.1 %s", menu_text(fsr_names[i]));
+        names[2 + i] = dl[i], names[7 + i] = dl[5 + i];
     }
     int cur = strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") ? 0 : 1;
     if (cfg_bool("NX2NAVI_DLAA")) {
-        cur = 2;
+        int base = strcmp(cfg_value("NX2NAVI_TAA"), "fsr3") ? 2 : 7;
+        cur = base;
         for (int i = 0; i < 5; i++)
-            if (!strcmp(cfg_value("NX2NAVI_DLSS"), modes[i])) cur = 2 + i;
+            if (!strcmp(cfg_value("NX2NAVI_DLSS"), modes[i])) cur = base + i;
     }
-    int nv = opt_choice_index("NX2NAVI_UPSCALER", UI_MENU_UPSCALING, names, 7, cur, 1, UI_MENU_UPSCALING_DESC,
+    int nv = opt_choice_index("NX2NAVI_UPSCALER", UI_MENU_UPSCALING, names, 12, cur, 1, UI_MENU_UPSCALING_DESC,
                               cur >= 2 ? menu_text(UI_MENU_UPSCALING_DLSS_NOTE) : nullptr);
     if (nv < 0) return;
     opt_apply("NX2NAVI_UPSCALER", nv == 1 ? "fsr" : "bilinear");
     opt_apply("NX2NAVI_DLAA", nv >= 2 ? "1" : "0");
-    if (nv >= 2) opt_apply("NX2NAVI_DLSS", modes[nv - 2]);
+    if (nv < 2) opt_apply("NX2NAVI_FRAMEGEN", "off");   // it needs DLSS's or FSR 3.1's motion vectors (row_framegen)
+    if (nv >= 2) opt_apply("NX2NAVI_DLSS", modes[(nv - 2) % 5]);
+    if (nv >= 2) opt_apply("NX2NAVI_TAA", nv >= 7 ? "fsr3" : "dlss");
+}
+
+// HDR (vk_hdr.c), after a restart: off, the runtime's own (the game's tonemap kept above SDR white) or the game's native
+// HDR. The brightness rows follow while it is on.
+static void row_hdr(void) {
+    static const char *const values[] = {"0", "1", "native"};
+    const char *names[] = {menu_text(UI_MENU_FRAMEGEN_OFF), menu_text(UI_MENU_HDR_ENHANCED), menu_text(UI_MENU_HDR_NATIVE)};
+    opt_choice_list("NX2NAVI_HDR", UI_MENU_HDR, values, names, 3, UI_MENU_HDR_DESC, -1, menu_text(UI_MENU_HDR_NOTE));
+    if (!cfg_bool("NX2NAVI_HDR")) return;
+    opt_slider("NX2NAVI_HDR_PEAK_NITS", UI_MENU_HDR_PEAK, 400, 10000, UI_MENU_HDR_PEAK_DESC, 50, "%.0f nits");
+    opt_slider("NX2NAVI_HDR_GAME_NITS", UI_MENU_HDR_GAME, 80, 500, UI_MENU_HDR_GAME_DESC, 5, "%.0f nits");
+    opt_slider("NX2NAVI_HDR_UI_NITS", UI_MENU_HDR_UI, 80, 500, UI_MENU_HDR_UI_DESC, 5, "%.0f nits");
+    // no hue slider: the hue correction belonged to the runtime's replacement tonemap, and Enhanced now extends the
+    // game's own tonemap in place (vk_hdr.c aces_extend), so NX2NAVI_HDR_HUE changes nothing in this game
+}
+
+// Frame generation (vk_fg.cpp), after a restart; it needs a temporal upscaler's motion vectors
+static void row_framegen(void) {
+    // the generated frames are made from DLSS's or FSR 3.1's motion vectors: without one of them it would do nothing
+    if (!cfg_bool("NX2NAVI_DLAA")) opt_disable_next(UI_MENU_FRAMEGEN_NEEDS);
+    static const char *const values[] = {"off", "fsr3", "dlss"};
+    const char *names[] = {menu_text(UI_MENU_FRAMEGEN_OFF), "AMD FSR 3.1", "NVIDIA DLSS"};
+    const char *v = cfg_value("NX2NAVI_FRAMEGEN");
+    int cur = !strcmp(v, "fsr3") ? 1 : !strcmp(v, "dlss") ? 2 : 0;
+    // NVIDIA DLSS (vk_dlssg.c) is listed only while it is set: Streamline now starts and takes the swapchain, but presents
+    // no generated frames yet (one presented per frame, status OK)
+    int n = cur == 2 ? 3 : 2;
+    int nv = opt_choice_index("NX2NAVI_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, cur, 0, UI_MENU_FRAMEGEN_DESC,
+                              menu_text(UI_MENU_FRAMEGEN_NOTE));
+    if (nv >= 0) opt_apply("NX2NAVI_FRAMEGEN", values[nv]);
 }
 
 // The picture's height (widescreen.c picture_height): the game's 1440 or more.
@@ -777,8 +817,12 @@ static void tab_screen(float scale) {
     if (wide_available()) opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
     if (wide_available()) row_game_res();
     row_upscaling();
-    // RCAS runs only under FSR (vk_fsr.c vk_fsr_record): with bilinear or DLSS the slider would do nothing
-    if (strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") || cfg_bool("NX2NAVI_DLAA")) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
+    row_framegen();
+    row_hdr();
+    // The sharpening runs under FSR 1 (vk_fsr.c vk_fsr_record, RCAS) and FSR 3.1 (vk_ffx.cpp, its own RCAS); with
+    // bilinear or DLSS the slider would do nothing
+    int dl = cfg_bool("NX2NAVI_DLAA"), fsr3 = dl && !strcmp(cfg_value("NX2NAVI_TAA"), "fsr3");
+    if (!fsr3 && (strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
     opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
     static const UiTextId aspect[] = {UI_MENU_ASPECT_FIT, UI_MENU_ASPECT_STRETCH};
     opt_choice("NX2NAVI_ASPECT", UI_MENU_ASPECT, aspect, 2, UI_MENU_ASPECT_DESC);
@@ -1010,7 +1054,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     // the port version and the game update, right-aligned on the title line: what a bug report needs first
     char game[16], version[96];
     snprintf(game, sizeof game, "%d.%d.%d", rt_game_version / 100, rt_game_version / 10 % 10, rt_game_version % 10);
-    snprintf(version, sizeof version, "Ocarina Recomp %s  -  game %s", rt_port_version, game);
+    snprintf(version, sizeof version, "NX2navi %s  -  game %s", rt_port_version, game);
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(version).x);
     ImGui::TextDisabled("%s", version);
 
@@ -1149,7 +1193,11 @@ static void perf_tick(uint64_t now, const MenuTarget *t) {
         g_perf_frames++;
         if (d > g_perf_max_ns) g_perf_max_ns = d;
         if (g_perf_win_ns >= 500000000ull) {
-            snprintf(g_perf_text, sizeof g_perf_text, menu_text(UI_PERF_LINE_FPS), g_perf_frames * 1e9 / g_perf_win_ns);
+            double out = gfx_output_fps();   // with frame generation: the display's rate too
+            if (out > 0)
+                snprintf(g_perf_text, sizeof g_perf_text, menu_text(UI_PERF_LINE_FPS_FG), g_perf_frames * 1e9 / g_perf_win_ns, out);
+            else
+                snprintf(g_perf_text, sizeof g_perf_text, menu_text(UI_PERF_LINE_FPS), g_perf_frames * 1e9 / g_perf_win_ns);
             g_perf_win_ns = g_perf_max_ns = 0;
             g_perf_frames = 0;
         }
@@ -1306,6 +1354,12 @@ static void perf_full_draw(const MenuTarget *t, float scale) {
         perf_cell(UI_MENU_OV_FMT_FPS, s.fps);
         perf_cell(UI_MENU_OV_LOW1, s.low1_fps);
         perf_cell(UI_MENU_OV_LOW01, s.low01_fps);
+        if (gfx_output_fps() > 0) {   // frame generation: what the display gets, generated frames included
+            perf_label(UI_MENU_OV_FG_LABEL, fps_c);
+            perf_cell(UI_MENU_OV_FMT_FPS, (float)gfx_output_fps());
+            ImGui::TableNextColumn();
+            ImGui::TableNextColumn();
+        }
         perf_label(UI_MENU_OV_FRAME_LABEL, fps_c);
         perf_cell(UI_MENU_OV_FRAME_MS, s.frame_ms_avg);
         perf_cell(UI_MENU_OV_MAX_MS, s.frame_ms_max);
@@ -1451,6 +1505,7 @@ extern "C" void menu_boot_set(int phase, long long done, long long total) {
     g_boot_done.store(done, std::memory_order_relaxed);
     g_boot_total.store(total, std::memory_order_relaxed);
     g_boot_phase.store(phase, std::memory_order_release);
+    g_booting.store(phase >= 0, std::memory_order_release);
 }
 
 // A panel in the middle of the screen in the menu's colours: the title, the step with its count and a bar, and why it

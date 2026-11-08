@@ -20,11 +20,13 @@
 #include <wchar.h>
 
 #include "cfg.h"
+#include "gfx.h"
 #include "host.h"
 #include "platform/platform.h"
 #include "vk.h"
 #include "vk_dlaa.h"
 #include "vk_exec.h"
+#include "vk_ffx.h"
 #include "vk_rec.h"
 #include "dlaa_mv_spv.h"
 
@@ -111,6 +113,16 @@ int vk_dlaa_wanted(void) {
     return wanted;
 }
 
+// The temporal upscaler behind dlaa (NX2NAVI_TAA, read once: like dlaa it applies after a restart): NVIDIA DLSS through
+// NGX, or AMD FSR 3.1 through amd_fidelityfx_vk.dll (vk_ffx.cpp), which takes the same inputs and needs no device
+// extensions. The DLSS mode setting (NX2NAVI_DLSS) is the render scale for both.
+static int fsr3(void) {
+    static int on = -1;
+    if (on < 0) on = !strcmp(cfg_value("NX2NAVI_TAA"), "fsr3");
+    return on;
+}
+int vk_dlaa_fsr3(void) { return vk_dlaa_wanted() && fsr3(); }
+
 static int core_load(void) {
     if (N.tried) return N.loaded;
     N.tried = 1;
@@ -166,7 +178,7 @@ static int listed(const char *const *list, uint32_t n, const char *s) {
 void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max) {
     unsigned ni = 0, nd = 0;
     const char **ie = NULL, **de = NULL;
-    if (!vk_dlaa_wanted() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
+    if (!vk_dlaa_wanted() || fsr3() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
     for (unsigned i = 0; i < ni; i++)
         if (!listed(ext, *n, ie[i]) && *n < max) ext[(*n)++] = ie[i];
 }
@@ -175,7 +187,7 @@ void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, cons
                          uint32_t max) {
     unsigned ni = 0, nd = 0;
     const char **ie = NULL, **de = NULL;
-    if (!vk_dlaa_wanted() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
+    if (!vk_dlaa_wanted() || fsr3() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
     for (unsigned i = 0; i < nd; i++) {
         int ok = 0;
         for (uint32_t k = 0; k < nhave && !ok; k++) ok = !strcmp(have[k].extensionName, de[i]);
@@ -225,6 +237,11 @@ static int utf8_to_wide(const char *in, wchar_t *out, size_t cap) {
 #endif
 
 void vk_dlaa_init(void) {
+    if (vk_dlaa_wanted() && fsr3()) {
+        N.available = vk_ffx_load();
+        rt_log("dlaa: the temporal upscaler is AMD FSR 3.1%s", N.available ? "" : ", which is missing: the game's own scaling");
+        return;
+    }
     if (!vk_dlaa_wanted() || !core_load()) return;
 #ifdef _WIN32
     wchar_t wdir[MAX_PATH];
@@ -338,7 +355,47 @@ static struct {
     int ids_ok;
     unsigned cfg_seen;           // cfg_version when preset was read
     uint64_t last_eval_ns;       // plat_now_ns of the previous evaluation (FrameTimeDeltaInMsec)
+    VkFfxImage fg_depth, fg_mv;  // the last evaluation's depth and motion vectors, for frame generation
+    VkImageView fg_depth_view, fg_mv_view;
+    VkDlaaCamera fg_cam;         // this frame's camera (mv_pass), fg_cam_ok when known
+    int fg_cam_ok;
+    float fg_jx, fg_jy;
+    int fg_fresh, fg_reset;      // fresh: not handed out yet (vk_dlaa_fg_inputs)
+    // the picture without the HUD for frame generation (vk_dlaa_fg_hudless): DLSS's output encoded to sRGB as the game's
+    // last pass encodes its picture, then copied bit for bit into an RGBA8 UNORM image, the format the present reads; with
+    // HDR on, DLSS's output as RGBA16F, as the game's float picture the present encodes (hl_srgb unused)
+    VkImage hl_srgb, hl;
+    VmaAllocation hl_srgb_mem, hl_mem;
+    VkImageView hl_view;
+    uint32_t hl_w, hl_h;
+    VkFormat hl_fmt;
+    int hl_fresh;
 } D = {.mv_ok = -1, .cfg_seen = ~0u};
+
+int vk_dlaa_fg_hudless(VkImage *img, VkImageView *view, uint32_t *w, uint32_t *h, VkFormat *fmt) {
+    if (!D.hl_fresh) return 0;
+    D.hl_fresh = 0;
+    *img = D.hl, *view = D.hl_view, *w = D.hl_w, *h = D.hl_h, *fmt = D.hl_fmt;
+    return 1;
+}
+
+int vk_dlaa_fg_views(VkImageView *depth, VkImageView *mv) {
+    *depth = D.fg_depth_view, *mv = D.fg_mv_view;
+    return D.fg_depth_view && D.fg_mv_view;
+}
+
+int vk_dlaa_fg_camera(VkDlaaCamera *c) {
+    if (!D.fg_cam_ok) return 0;
+    *c = D.fg_cam;
+    return 1;
+}
+
+int vk_dlaa_fg_inputs(VkFfxImage *depth, VkFfxImage *mv, float *jx, float *jy, int *reset) {
+    if (!D.fg_fresh || D.failed) return 0;
+    D.fg_fresh = 0;
+    *depth = D.fg_depth, *mv = D.fg_mv, *jx = D.fg_jx, *jy = D.fg_jy, *reset = 0;
+    return 1;
+}
 
 const VkTexImage *vk_dlaa_swap_img;
 VkImageView vk_dlaa_swap_view;
@@ -367,7 +424,7 @@ static int image2d(uint32_t w, uint32_t h, VkFormat f, VkImageUsageFlags usage, 
 
 static void free_size(struct Size *e) {
     const VkCtx *c = vk_ctx();
-    vkDeviceWaitIdle(c->device);   // a third scene size: the evicted images may still be in flight
+    vk_queue_lock(), vkDeviceWaitIdle(c->device), vk_queue_unlock();   // a third scene size: the evicted images may still be in flight
     if (e->out_view) vkDestroyImageView(c->device, e->out_view, NULL);
     if (e->mv_view) vkDestroyImageView(c->device, e->mv_view, NULL);
     if (e->out) vmaDestroyImage(c->vma, e->out, e->out_mem);
@@ -378,7 +435,7 @@ static void free_size(struct Size *e) {
         if (e->chars_view[i]) vkDestroyImageView(c->device, e->chars_view[i], NULL);
         if (e->chars[i]) vmaDestroyImage(c->vma, e->chars[i], e->chars_mem[i]);
     }
-    if (e->feat) N.release(e->feat);
+    if (e->feat && N.release) N.release(e->feat);
     memset(e, 0, sizeof *e);
 }
 
@@ -614,6 +671,30 @@ static void ocam_vp(const float *v, double out[16]) {
         }
 }
 
+// Frame generation's camera (vk_dlaa_fg_camera) from the Ocarina block: the projection is rows 7-10, the view rows 0-2
+// (rows: right, up, back; the camera looks down -z), m the reprojection from this frame's clip space to last frame's.
+// Each matrix is handed out transposed, for row vectors.
+static void fg_store(float out[16], const double m[16]) {
+    for (int r = 0; r < 4; r++)
+        for (int k = 0; k < 4; k++) out[r * 4 + k] = (float)m[k * 4 + r];
+}
+static void fg_camera(const float *v, const double m[16]) {
+    double P[16], Pi[16], mi[16];
+    for (int i = 0; i < 16; i++) P[i] = v[28 + i];
+    if (!inv4(P, Pi) || !inv4(m, mi)) return;
+    VkDlaaCamera *c = &D.fg_cam;
+    fg_store(c->view_to_clip, P), fg_store(c->clip_to_view, Pi);
+    fg_store(c->clip_to_prev_clip, m), fg_store(c->prev_clip_to_clip, mi);
+    for (int i = 0; i < 3; i++) {
+        c->right[i] = v[i], c->up[i] = v[4 + i], c->fwd[i] = -v[8 + i];
+        // the position: -R^T t, R the view's 3x3 and t its last column
+        c->pos[i] = -(v[i] * v[3] + v[4 + i] * v[7] + v[8 + i] * v[11]);
+    }
+    c->fov_y = P[5] != 0 ? 2.0f * (float)atan(1.0 / fabs(P[5])) : 1.0f;
+    c->aspect = P[0] != 0 ? (float)fabs(P[5] / P[0]) : 1.777f;
+    D.fg_cam_ok = 1;
+}
+
 // The pass, recorded through the recorder like the replay's own commands. 0: no camera this frame (the vectors stay
 // zero and DLSS starts a new history). bias > 0 with this frame's G-buffer classes (D.ids) also writes e->mask, the
 // bias mask (dlaa_mv.comp); *masked says whether it did.
@@ -648,6 +729,8 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
             have_m = 1;
         }
     }
+    D.fg_cam_ok = 0;
+    if (cr && have_m && D.cam_size == OCAM_BLOCK) fg_camera(cr, m);
     int s = D.cam_slot, had_prev = D.cam_prev_ok;
     if (D.cam_size == CAM_BLOCK) {   // the whole block, for the per-object motion pass (the deferred engine's only)
         VkBufferCopy bc = {cam.offset, (VkDeviceSize)s * CAM_SLOT, CAM_BLOCK};
@@ -807,7 +890,7 @@ fail:
 
 static void free_snap(struct Snap *s) {
     const VkCtx *c = vk_ctx();
-    vkDeviceWaitIdle(c->device);   // a fourth size: the evicted images may still be in flight
+    vk_queue_lock(), vkDeviceWaitIdle(c->device), vk_queue_unlock();   // a fourth size: the evicted images may still be in flight
     if (s->before_view) vkDestroyImageView(c->device, s->before_view, NULL);
     if (s->mask_view) vkDestroyImageView(c->device, s->mask_view, NULL);
     if (s->before) vmaDestroyImage(c->vma, s->before, s->before_mem);
@@ -1013,6 +1096,8 @@ static int perf_quality(uint32_t w, uint32_t ow) {
 }
 
 // dst: the target DLSS's picture goes to, NULL for the light target itself (DLAA in place).
+static void hudless(VkCommandBuffer cb, struct Size *e, uint32_t w, uint32_t h);
+
 static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     const VkExecTarget *t = &D.color, *z = &D.depth;
     if (!dst) dst = t;
@@ -1027,7 +1112,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     struct Size *e = size_for(cb, w, h, ow, oh);
     if (!e) return dl_fail("work image creation", 0);
     if (e != D.last) D.reset = 1, D.why[0]++, e->chars_ok = 0;   // another size's history is from another moment
-    if (!D.params && !NGX_OK(N.alloc_params(&D.params))) return dl_fail("parameter allocation", 0);
+    if (!fsr3() && !D.params && !NGX_OK(N.alloc_params(&D.params))) return dl_fail("parameter allocation", 0);
     NgxParam *p = D.params;
     VkImageView zv = vk_exec_target_view(z->img, z->format, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT, z->level,
                                          z->base_layer, 1, 0);
@@ -1050,6 +1135,21 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     uint64_t c0 = timed ? kern_now_ns() : 0;
     rec_drain();   // NGX records into the command buffer itself: the recorder thread must have made every call so far
     if (timed) T.cpu_drain += kern_now_ns() - c0;
+    if (fsr3()) {   // FSR 3.1 (vk_ffx.cpp) in DLSS's place: the same images, then the same blit below
+        if (t->level || t->base_layer || z->level || z->base_layer) return dl_fail("FSR 3.1 on a target that is not level 0, layer 0", 0);
+        if (D.last_color != t->image) D.reset = 1, D.why[2]++, D.last_color = t->image;
+        uint64_t now = plat_now_ns();
+        double dt = D.last_eval_ns ? (now - D.last_eval_ns) / 1e6 : 0;
+        D.last_eval_ns = now;
+        VkFfxImage fc = {t->image, t->format, w, h, 0}, fz = {z->image, z->format, w, h, 0},
+                   fm = {e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1}, fo = {e->out, VK_FORMAT_R16G16B16A16_SFLOAT, ow, oh, 1};
+        if (!vk_ffx_upscale(cb, &fc, &fz, &fm, &fo, jx, jy, D.reset, dt > 0 && dt < 100 ? (float)dt : 16.67f, 0))
+            return dl_fail("FSR 3.1", 0);
+        static int told;
+        if (!told++) rt_log("dlaa: FSR 3.1 at %ux%u -> %ux%u (scene format %d, depth format %d)", w, h, ow, oh,
+                            (int)t->format, (int)z->format);
+        goto evaluated;
+    }
     if (!e->feat) {
         p_setu(p, "CreationNodeMask", 1);
         p_setu(p, "VisibilityNodeMask", 1);
@@ -1115,6 +1215,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     NgxResult r = N.evaluate(cb, e->feat, p, NULL);
     if (timed) T.cpu_ngx += kern_now_ns() - c0;
     if (!NGX_OK(r)) return dl_fail("DLSS evaluation", r);
+evaluated:
     if (timed) times_mark(cb, T_DL1);   // through the recorder, after NGX's own commands
     D.reset = 0;
     D.last = e, e->used = D.evals + 1;
@@ -1137,9 +1238,15 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
                    VK_FILTER_NEAREST);
     full_barrier(cb);
     if (dst != t) vk_dlaa_swap_img = t->img, vk_dlaa_swap_view = e->out_view;   // the scaling draw reads DLSS's picture
+    if (vk_dlaa_hudless_wanted) hudless(cb, e, ow, oh);   // frame generation keeps the HUD out of its generated frames
     ex->recorded += 4;
     vk_exec_draw_new_cb();   // NGX bound pipelines and descriptor sets of its own: the next draw binds everything again
     D.jdepth = z->image;
+    // for frame generation at this frame's present (vk_dlaa_fg_inputs)
+    D.fg_depth = (VkFfxImage){z->image, z->format, w, h, 0};
+    D.fg_mv = (VkFfxImage){e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1};
+    D.fg_depth_view = zv, D.fg_mv_view = e->mv_view;
+    D.fg_jx = jx, D.fg_jy = jy, D.fg_fresh = 1;
     next_jitter(w, ow);
     if (++D.evals == 1 || D.evals == 300 || D.evals % 3600 == 0)   // 300: one early line with the frames counted
         rt_log("dlaa: %llu frames anti-aliased (scene %ux%u, output %ux%u; %llu frames without the DLAA point, %llu with camera "
@@ -1149,6 +1256,67 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
                (unsigned long long)D.mv_frames, (unsigned long long)D.masked, (unsigned long long)D.mv_none,
                (unsigned long long)D.holds, (unsigned long long)D.why[0], (unsigned long long)D.why[1],
                (unsigned long long)D.why[2], (unsigned long long)R.made, (unsigned long long)R.missed);
+}
+
+// The HUD-less picture (vk_dlaa_fg_hudless): DLSS's output, which the HUD is then drawn over, through the encode the
+// game's last pass gives its picture (linear to sRGB), as RGBA8 UNORM bytes like the picture the present reads. With
+// HDR (NX2NAVI_HDR = 1) the game's picture stays float and linear up to the present, which encodes it to PQ
+// (vk_hdr_encode): DLSS's output is kept as RGBA16F for the same encode. The game's own HDR (native) encodes inside the
+// game, which this cannot follow: no HUD-less picture there.
+int vk_dlaa_hudless_wanted;
+static void hudless(VkCommandBuffer cb, struct Size *e, uint32_t w, uint32_t h) {
+    const VkCtx *c = vk_ctx();
+    int hdr = vk_hdr_wanted() && !vk_hdr_native();
+    if (vk_hdr_native()) return;
+    VkFormat fmt = hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    if (D.hl && (D.hl_w != w || D.hl_h != h || D.hl_fmt != fmt)) {
+        vk_queue_lock(), vkDeviceWaitIdle(c->device), vk_queue_unlock();
+        vkDestroyImageView(c->device, D.hl_view, NULL);
+        vmaDestroyImage(c->vma, D.hl, D.hl_mem);
+        if (D.hl_srgb) vmaDestroyImage(c->vma, D.hl_srgb, D.hl_srgb_mem);
+        D.hl = D.hl_srgb = VK_NULL_HANDLE;
+    }
+    if (!D.hl) {
+        VkImageView v2 = VK_NULL_HANDLE;
+        VkImageUsageFlags u = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        if ((!hdr && !image2d(w, h, VK_FORMAT_R8G8B8A8_SRGB, u, &D.hl_srgb, &D.hl_srgb_mem, &v2)) ||
+            !image2d(w, h, fmt, u | VK_IMAGE_USAGE_STORAGE_BIT, &D.hl, &D.hl_mem, &D.hl_view)) {
+            rt_log("dlaa: the HUD-less picture's images could not be made: frame generation sees the HUD");
+            vk_dlaa_hudless_wanted = 0;
+            return;
+        }
+        if (v2) vkDestroyImageView(c->device, v2, NULL);
+        D.hl_w = w, D.hl_h = h, D.hl_fmt = fmt;
+        VkImageMemoryBarrier2 ib[2];
+        VkImage im[2] = {D.hl, D.hl_srgb};
+        int nim = D.hl_srgb ? 2 : 1;
+        for (int i = 0; i < nim; i++)
+            ib[i] = (VkImageMemoryBarrier2){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                            .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                                            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .image = im[i],
+                                            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+        VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = (uint32_t)nim,
+                               .pImageMemoryBarriers = ib};
+        vkCmdPipelineBarrier2(cb, &di);
+    }
+    VkImageBlit b = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .srcOffsets = {{0, 0, 0}, {(int32_t)w, (int32_t)h, 1}},
+                     .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstOffsets = {{0, 0, 0}, {(int32_t)w, (int32_t)h, 1}}};
+    vkCmdBlitImage(cb, e->out, VK_IMAGE_LAYOUT_GENERAL, hdr ? D.hl : D.hl_srgb, VK_IMAGE_LAYOUT_GENERAL, 1, &b,
+                   VK_FILTER_NEAREST);
+    full_barrier(cb);
+    if (hdr) {
+        D.hl_fresh = 1;
+        return;
+    }
+    VkImageCopy cp = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                      .extent = {w, h, 1}};
+    vkCmdCopyImage(cb, D.hl_srgb, VK_IMAGE_LAYOUT_GENERAL, D.hl, VK_IMAGE_LAYOUT_GENERAL, 1, &cp);
+    full_barrier(cb);
+    D.hl_fresh = 1;
 }
 
 static int scene_color(VkFormat f) {
@@ -1177,7 +1345,13 @@ void vk_dlaa_pass(VkExec *ex) {
     // The G-buffer: several colour targets with the D32F scene depth. Only the light target drawn after it arms the
     // frame; at night the game draws into the light target alone with the scene depth before the G-buffer too, and
     // DLAA then ran at a small pass ahead of the whole scene, which reached the screen jittered.
-    if (ex->pass_ncolor >= 3 && scene) {
+    // A pass of that shape smaller than the light target already armed is not one: Ocarina draws a half-size effect
+    // into three targets with a half-size D32F depth after its scene, and taking that for a G-buffer switched every
+    // later frame to the deferred shape, where DLSS's and FSR 3.1's smaller modes never found their output pass.
+    if (ex->pass_ncolor >= 3 && scene && !(D.armed && (z->width < D.color.width || z->height < D.color.height))) {
+        if (!deferred)
+            rt_log("dlaa: a G-buffer pass (%d colour targets, depth %ux%u, target 0 format %d): the deferred frame shape",
+                   ex->pass_ncolor, z->width, z->height, c->image ? (int)c->format : 0);
         D.gbuf = 1, D.armed = 0, deferred = 1;
         // target 0 is the object-class buffer (RGBA8, the scene size): the characters' bias mask reads its green. A
         // smaller pass of the same shape (640x360, seen while loading) does not replace the scene's in the same frame.
@@ -1195,6 +1369,10 @@ void vk_dlaa_pass(VkExec *ex) {
         (!D.armed || (c->width >= D.color.width && c->height >= D.color.height)) && c->samples <= 1 && !c->is3d) {
         int first = !D.armed;
         D.color = *c, D.depth = *z, D.armed = 1;
+        static int told;
+        if (first && !told++)
+            rt_log("dlaa: first scene armed: light target %ux%u format %d, depth %ux%u", c->width, c->height, (int)c->format,
+                   z->width, z->height);
         if (first) mask_snapshot(ex);   // the lit scene, before the transparents (reactive mask)
         return;
     }
@@ -1333,7 +1511,12 @@ int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs) {
     int known = 0;
     for (size_t i = 0; i < sizeof FXAA_FS / sizeof FXAA_FS[0]; i++) known |= h == FXAA_FS[i];
     if (!known) return 0;
-    if (!ex->depth.image) return D.up;   // the scaling pass, which DLSS replaced
+    if (!ex->depth.image) {   // the scaling pass, which DLSS replaced
+        static int told;
+        if (D.up && !told++) rt_log("dlaa: the game's scaling draw left out, DLSS wrote it (fragment shader %016llx)",
+                                    (unsigned long long)h);
+        return D.up;
+    }
     if (!fxaa && !fx_found) {
         fx_found = 1;
         rt_log("dlaa: fxaa = 0 skips the game's FXAA (fragment shader %016llx)", (unsigned long long)h);

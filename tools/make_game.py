@@ -15,6 +15,8 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
   4. lift     recomp/gen.py with recomp/patches-v111.txt -> <out>/build-cache/lift, plus the two SDK bring-up fixes
   5. compile  the lifted C and runtime/ with MSYS2's clang, linked into <out>/ocarina.exe; the MSYS2 DLLs it loads,
               the shader translator and romfs-index.bin beside it
+  6. shaders  every shader in the game files (tools/prepare_shaders.py, default bind state) translated, and each one's
+              GPU driver build done once, so play does not stop to compile them (`ocarina.exe --prepare-shaders`)
 
 The exefs and romfs steps depend only on the game files; lift and compile depend on this kit's code too. A newer kit
 therefore lifts and compiles again but keeps the unpacked game files, and --rebuild needs no game files at all. The
@@ -64,7 +66,7 @@ EXEFS_FILES = ('main', 'main.npdm', 'sdk', 'subsdk0', 'rtld')
 MODULES = ('main', 'sdk', 'subsdk0', 'rtld')
 ALIGN = 16
 STATE_VERSION = 2
-STEPS = ('exefs', 'romfs', 'lift', 'compile')
+STEPS = ('exefs', 'romfs', 'lift', 'compile', 'shaders')
 
 # Bring-up fixes in the lifted SDK, each anchored on exact generated text that must occur once.
 LIFT_FIXES = [
@@ -886,13 +888,21 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
             print(f'--- {src}\n{err}', file=sys.stderr)
         fail(f'{len(bad)} files did not compile')
 
+    # the manifest (per-monitor DPI awareness: the picture at the monitor's real size, not one Windows stretches) and the
+    # icon, runtime/nx2navi.rc through MSYS2's windres
+    rco = obj / 'nx2navi_rc.o'
+    r = subprocess.run([str(msys / 'bin' / 'windres.exe'), '-I', str(rt), '-O', 'coff', '-i', str(rt / 'nx2navi.rc'),
+                        '-o', str(rco)], capture_output=True, text=True, env=env, errors='replace')
+    if r.returncode:
+        fail(f'windres failed on runtime/nx2navi.rc: {r.stderr.strip()[:400]}')
+    objs = [o for _, o in srcs] + [rco]
     exe = out / EXE_NAME
     rsp = cache_dir / 'link.rsp'
-    rsp.write_text('\n'.join('"%s"' % o.as_posix() for _, o in srcs), encoding='utf-8')
+    rsp.write_text('\n'.join('"%s"' % o.as_posix() for o in objs), encoding='utf-8')
     # lld links several times faster than GNU ld; the stack matches tools/build_game.py's build
     ld = ['-fuse-ld=lld', '-Wl,--stack,16777216'] if (msys / 'bin' / 'ld.lld.exe').is_file() else []
     lib = ['-Wl,--whole-archive', str(prebuilt[0]), '-Wl,--no-whole-archive'] if prebuilt else []
-    stamp = [[o.name, o.stat().st_size, o.stat().st_mtime_ns] for _, o in srcs]
+    stamp = [[o.name, o.stat().st_size, o.stat().st_mtime_ns] for o in objs]
     if prebuilt:
         stamp.append([prebuilt[0].name, prebuilt[0].stat().st_size, sha256_file(prebuilt[0])])
     link_key = sha256_bytes(json.dumps([LINK_LIBS, ld, cid] + stamp).encode())
@@ -918,11 +928,24 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
     copy_if_changed(gen / 'romfs-index.bin', out / 'romfs-index.bin')
     for name in ('nx2navi_xlate.exe', 'nx2navi_xlate.id'):
         copy_if_changed(KIT / 'bin' / name, out / name)
+    if (KIT / 'bin' / 'amd_fidelityfx_vk.dll').is_file():   # FSR 3.1 (runtime/vk_ffx.cpp)
+        copy_if_changed(KIT / 'bin' / 'amd_fidelityfx_vk.dll', out / 'amd_fidelityfx_vk.dll')
     say(f'  {EXE_NAME} {exe.stat().st_size / 1e6:.0f} MB; beside it: {", ".join(copy_dlls(exe, msys / "bin", out))}')
     (out / 'profile').mkdir(exist_ok=True)
 
 
 # ---------------------------------------------------------------- main
+
+def step_shaders(out):
+    """Every shader of the game files into the game's shader cache and the driver's own cache, before the first start."""
+    cmd = [sys.executable, str(KIT / 'tools' / 'prepare_shaders.py'), str(out), '--romfs', str(out / 'romfs'),
+           '--exefs', str(out / 'exefs'), '--no-list', '--exe', 'ocarina.exe']
+    if subprocess.run(cmd).returncode:
+        fail('preparing the shaders failed (the lines above say why); the game still runs, compiling shaders as it '
+             'meets them. Run the build again to retry this step')
+    for seed in ('seed-programs.bin', 'seed-answers.bin'):   # translated now: the shader cache holds them
+        (out / seed).unlink(missing_ok=True)
+
 
 def keep_awake():
     """Hold off sleep for this process's life (Windows): the build runs for many minutes with no input, and a PC that
@@ -959,7 +982,11 @@ def step_key(step, identity, out=None):
     lift = f'lift|{exefs_digest(out)}|{lift_digest()}'
     if step == 'lift':
         return lift
-    return f'compile|{lift}|{tree_digest(KIT / "runtime", ("**/*",))}|{sha256_file(Path(__file__))}|{kit_version()}'
+    compile_key = f'compile|{lift}|{tree_digest(KIT / "runtime", ("**/*",))}|{sha256_file(Path(__file__))}|{kit_version()}'
+    if step == 'compile':
+        return compile_key
+    # shaders: the built game and the translator that prepared them
+    return f'shaders-1|{compile_key}|{sha256_file(KIT / "tools" / "prepare_shaders.py")}|{sha256_file(KIT / "bin" / "nx2navi_xlate.id")}'
 
 
 def main():
@@ -1020,7 +1047,8 @@ def main():
     t0 = time.time()
     romfs_job = None
     runs = {'exefs': lambda: step_exefs(src, out), 'romfs': lambda: step_romfs(src, out, min(a.jobs, 8)),
-            'lift': lambda: step_lift(out, cache), 'compile': lambda: step_compile(out, cache, msys, a.jobs, romfs_job)}
+            'lift': lambda: step_lift(out, cache), 'compile': lambda: step_compile(out, cache, msys, a.jobs, romfs_job),
+            'shaders': lambda: step_shaders(out)}
     state_lock = threading.Lock()   # the RomFS step records itself from its own thread
 
     def save():
@@ -1049,6 +1077,8 @@ def main():
                         state['steps'].pop(later, None)
                 say(f'{name}:')
                 emit('step', step=name, state='start')
+                if name == 'shaders' and romfs_job:   # the shaders come out of the RomFS image
+                    romfs_job.join()
                 if name == 'romfs' and a.until != 'romfs':
                     # The RomFS image is mostly disk work, the lift and the compile are processor work: they run side
                     # by side, and only the RomFS index and the files that include it wait for the image

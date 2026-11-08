@@ -857,7 +857,7 @@ def exefs_status(ctx):
 
 def cheats_status(ctx):
     """The build's cheat status file (tools/cheats.py --status), which runtime/cheats.c reads: in build-cache, not in a
-    mod's own cheats folder, which the player (or TKMM's merge) may empty."""
+    mod's own cheats folder, which the player (or a mod manager's merge) may empty."""
     return ctx.dest / 'build-cache' / 'cheats.status'
 
 

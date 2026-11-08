@@ -88,7 +88,9 @@ A path the Windows ANSI code page cannot hold breaks the MSYS2 tools, so the too
      (it reads UCRT64's headers; `make_game.py` `fast_clang` checks that both report the same version and target).
    - The lifted code is compiled for the processor's own level, x86-64-v3 (AVX2, FMA) or v2 (`cpu_level`): the game
      runs on the PC that builds it, and a generic build would do every fused multiply-add of the game in software.
-3. The game's Cetra Display is decoded for the window.
+3. **Prepare the Shaders**: make_game.py's last step translates every shader of the game into the game's shader
+   cache and the driver's own cache (`tools/prepare_shaders.py`), so play does not stop to compile them.
+4. The game's Cetra Display is decoded for the window.
 
 ## Updating
 
@@ -126,7 +128,8 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
      includes only `cpu.h` and `simd.h`: a change there compiles it all again, which is rare.
 6. **Swap In the New Build**: lld links `ocarina.exe.new`, which replaces `ocarina.exe` only once it is complete. A
    failed rebuild leaves the old build playable; Rebuild the Game tries again.
-7. Every version but the current and the previous one is deleted.
+7. **Prepare the Shaders** again for the new build; shaders the translator already prepared come from the cache.
+8. Every version but the current and the previous one is deleted.
 
 When the new version fails to start (exit code 86 from `start.pyw`, or any error within six seconds), the stub sets
 `current.txt` back to `previous.txt`'s version and starts it with `--rolled-back`. The game is never rebuilt while it
@@ -164,12 +167,15 @@ Built Game" is On. The dump is never touched.
 ## Releases
 
 1. Bump `VERSION`; build the shader translator (`tools/build_xlate.py`).
-2. With Python 3.14 and uv, on Windows (the prebuilt runtime needs MSYS2's own clang; on Linux add `--wine` to run
-   it through Wine, else the release ships without it and players compile `runtime/` themselves):
+2. With Python 3.14, numpy (the icon is drawn with it, `launcher/ui/art.py`) and uv, on Windows (the prebuilt runtime
+   needs MSYS2's own clang; on Linux add `--wine` to run it through Wine, else the release ships without it and
+   players compile `runtime/` themselves):
 
    ```powershell
-   .venv-py314\Scripts\python tools\make_launcher.py --xlate build\xlate --feed owner/name --notes notes.md
+   uv run --no-project --python 3.14 --with numpy tools\make_launcher.py --xlate build\xlate --ffx amd_fidelityfx_vk.dll --feed owner/name --notes notes.md
    ```
+
+   `--ffx` puts AMD's signed `amd_fidelityfx_vk.dll` (FidelityFX SDK 1.1.4) in the release for FSR 3.1.
 
    On Linux it cross-compiles the two programs with clang, lld and llvm-windres against the same MSYS2 packages and
    unpacks Tcl/Tk with msiextract (msitools). It writes into `build/launcher-release`: `NX2navi-Setup-<version>.exe`

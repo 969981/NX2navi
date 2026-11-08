@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/navi.png" alt="NX2navi" width="160"></p>
+
 # NX2navi
 
 **NX2navi** is a static recompilation of *The Legend of Zelda: Ocarina of Time* for Nintendo Switch 2 (game
@@ -12,13 +14,9 @@ version 1.1.1) into a native x86-64 application for Windows, with a Vulkan rende
 
 ## Status
 
-Early development. Kokiri Forest and the areas around it play at 60 fps and above; visual bugs and crashes are still
-expected.
-
-## Screenshots
-
-<!-- Screenshots are attached through GitHub (drag the PNG files into this section when editing the README on
-github.com); no image file is committed. -->
+Early development, playable. Kokiri Forest, Kakariko Village, Death Mountain Trail and its crater, the Temple of
+Time and the Great Fairy fountains play at 60 fps and above on current GPUs, from the title screen and from saves.
+Visual bugs and occasional crashes are still expected ([Known issues](#known-issues)).
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -27,35 +25,54 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - Native code, not emulation
 - 60 fps by default, or a limit of 30 to 240 fps, the display's refresh rate or unlimited
 - Native widescreen and ultrawide (the window's shape, 21:9 or 32:9) with the HUD, menus and movies kept 16:9
-- AMD FSR 1 or bilinear scaling to the window, with a sharpness setting; black bars or stretch
+- Resolutions above the game's 1440p: 1800p, 4K, 5K or the window's own size, sharp on high-DPI displays
+- Upscaling and anti-aliasing: NVIDIA DLSS (DLAA, Quality, Balanced, Performance, Ultra Performance; RTX GPUs) or
+  AMD FSR 3.1 (Native AA and the same modes; any GPU), which render the 3D scene at the mode's share and keep the HUD
+  sharp; or AMD FSR 1 or bilinear scaling to the window, with a sharpness setting; black bars or stretch
+- Frame generation with AMD FSR 3.1 (any GPU): a generated frame between every two the game draws, with the HUD kept
+  out of it, for about twice the frame rate on a fast display; in a window of another shape than the picture, frames
+  are generated inside the picture only, so the black bars stay clean
+- HDR on HDR displays: the game's own native HDR, or an enhanced HDR made from its SDR picture
+- Every shader prepared when the game is built, and the pipelines met in play built again in the background at each
+  start, so play does not stop to compile them; a draw that must wait for its pipeline has it built on worker
+  threads, never on the game's drawing thread
 - In-game settings menu (F1, or Minus and Plus together on a gamepad) and performance overlay (F10)
 - Keyboard, mouse and gamepads with remapping, Nintendo or Xbox button layout, rumble and gyro; the game follows
   whichever connected gamepad you press
 - Stereo or 5.1 surround sound output
 - Docked or handheld console mode
-- Graphics cards with less than 20 GiB of video memory keep the game's textures compressed (BC3), about half the
-  video memory at the same speed
+- The game's textures stay compressed (BC3, about half the video memory at the same speed) unless the PC has 20 GiB of
+  video memory and 48 GiB of RAM, as Windows counts video memory against the system's commit limit
 
 ## Installing
 
-Download `NX2navi-Setup-<version>.exe` from the releases and start it next to your `.nup` dump. The launcher it
+Download `NX2navi-Setup-<version>.exe` from the releases and start it next to your `.nup` dump. It is the only file
+you need. The launcher it
 installs finds the dump, downloads the build tools, builds the game on your PC (10 to 25 minutes, once) and starts
 it; afterwards it keeps the port up to date and rebuilds only what changed ([docs/launcher.md](docs/launcher.md)).
 [docs/README-BuildKit.md](docs/README-BuildKit.md) describes the same build by hand, [docs/building.md](docs/building.md)
 building from source. Settings are in the in-game menu and in `nx2navi.ini` ([nx2navi.ini.example](nx2navi.ini.example)
 lists every key). Controls: [docs/controls.md](docs/controls.md).
 
-Requirements: Windows 10 or later, an x86-64 CPU with SSE4.2 (AVX2/FMA machines get a faster build), a GPU with Vulkan
-1.3, `VK_EXT_external_memory_host` and `VK_EXT_mesh_shader`.
+Requirements: Windows 10 or later; an x86-64 CPU with SSE4.2 (AVX2/FMA machines get a faster build); 16 GB of RAM; about
+30 GB free for the game and 1.5 GB for the launcher and its tools; a GPU with Vulkan 1.3, `VK_EXT_external_memory_host`
+and `VK_EXT_mesh_shader`. The setup is not signed, so SmartScreen warns on its first start.
+
+## Known issues
+
+- The first start after an install or update, and the first visit to an area, can pause briefly while the graphics
+  driver builds what it has not seen; later starts are smooth.
+- A rare crash in the game's particle code.
+- DLSS Frame Generation is not offered yet: AMD FSR 3.1 frame generation works on every GPU, NVIDIA's included.
 
 ## License
 
-This repository is private. Its additions and changes are all rights reserved ([LICENSE-ADDITIONS](LICENSE-ADDITIONS)):
+The source is public to read. Its additions and changes are all rights reserved ([LICENSE-ADDITIONS](LICENSE-ADDITIONS)):
 no part of them may be copied, published, or used to train, fine-tune or prompt AI models or AI coding tools without
 written permission. The base import stays under its [MIT License](LICENSE), and third-party code keeps its own license
 ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). No license grants anything for Nintendo's game.
 
-Ocarina Recomp is an independent, non-commercial fan project, not affiliated with or endorsed by Nintendo. *The Legend
+NX2navi is an independent, non-commercial fan project, not affiliated with or endorsed by Nintendo. *The Legend
 of Zelda*, *Ocarina of Time* and *Nintendo Switch* are trademarks of Nintendo.
 
 ## Building from source

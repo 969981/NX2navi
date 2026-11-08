@@ -2,8 +2,9 @@
 //
 // The guest's longjmp restores x19-x30, sp and d8-d15 and returns to the setjmp call's return address, which in lifted
 // code is the middle of a host function: rt_dispatch has no function there and the run ends ("not a function start").
-// Ocarina's libjpeg reaches it whenever a JPEG fails to decode (its error_exit longjmps to the decoder's trap at
-// main+0x1661670).
+// Ocarina's font rasterizer reaches it whenever a large glyph's cells overflow its pool: main+0x166215c longjmps back
+// to main+0x1661670, which reports the overflow, and the caller renders the glyph again in smaller bands. Text at a
+// 2160-high picture does it in normal play.
 //
 // The overrides keep both halves on the host:
 //   setjmp(env): the guest registers longjmp restores, kept for env, and the host state of the lifted function that
@@ -145,6 +146,16 @@ static void ov_longjmp(Cpu *c) {
         char at[160];
         rt_log("longjmp to buffer %#llx from %s: back into the guest function that called setjmp",
                (unsigned long long)env, ldr_describe(c->x[30], at, sizeof at));
+        // the guest frames that led here (the frame-pointer chain), to name what failed
+        // (from the setjmp's caller: its return address, then the frame-pointer chain of x29 as setjmp saw it)
+        rt_log("  setjmp called from %s", ldr_describe(e.x[11], at, sizeof at));
+        uint64_t fp = e.x[10];
+        for (int k = 0; k < 10 && fp && mem_readable(fp, 16); k++) {
+            const uint64_t *f = (const uint64_t *)(uintptr_t)fp;
+            rt_log("  caller %d: %s", k, ldr_describe(f[1], at, sizeof at));
+            if (f[0] <= fp) break;
+            fp = f[0];
+        }
     }
     for (int i = 0; i < 12; i++) c->x[19 + i] = e.x[i];
     for (int i = 0; i < 8; i++) c->v[8 + i] = e.d[i];
