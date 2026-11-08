@@ -886,8 +886,6 @@ static void tab_screen(float scale) {
     int dl = cfg_bool("NX2NAVI_DLAA"), fsr3 = dl && !strcmp(cfg_value("NX2NAVI_TAA"), "fsr3");
     if (!fsr3 && (strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
     opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
-    static const UiTextId aspect[] = {UI_MENU_ASPECT_FIT, UI_MENU_ASPECT_STRETCH};
-    opt_choice("NX2NAVI_ASPECT", UI_MENU_ASPECT, aspect, 2, UI_MENU_ASPECT_DESC);
     opt_end();
 }
 
@@ -982,34 +980,44 @@ static const char *prompts_note(bool *restart) {
     }
 }
 
-// The confirmation of "Restart now", over the menu; Cancel has the cursor first. Restart writes nx2navi.ini, then closes
-// the game as Quit does and starts it again (gfx_window_request_restart). It waits while the game writes a save, and
-// the game stays when nx2navi.ini cannot be written, as the new prompts would not come back. From the Cheats tab
-// (restart_rebuild) Restart also lets the next start rebuild for cheats whose last rebuild failed (cheats_rebuild_allow).
-static bool restart_rebuild;
-static void restart_confirm(void) {
+// The confirmation of the menu's Restart button, over the menu; Cancel has the cursor first. Restart writes nx2navi.ini,
+// then closes the game as Quit does and starts it again (gfx_window_request_restart). It waits while the game writes a
+// save, and the game stays when nx2navi.ini cannot be written, as the changed settings would not come back. From the
+// Cheats tab (restart_rebuild) Restart also lets the next start rebuild for cheats whose last rebuild failed
+// (cheats_rebuild_allow). The Quit button's confirmation is the same box (g_confirm_quit): closing the window already
+// finishes a save in progress (gfx_window_closed), so it does not wait.
+static bool restart_rebuild, g_confirm_quit;
+static void restart_confirm(float scale) {
     g_modal = false;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    if (!ImGui::BeginPopupModal("##restart_confirm", nullptr,
-                                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize))
-        return;
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 0);
+    const bool open = ImGui::BeginPopupModal("##confirm", nullptr,
+                                             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar();
+    if (!open) return;
     g_modal = true;
-    ImGui::TextUnformatted(menu_text(UI_MENU_RESTART_CONFIRM));
-    bool saving = fs_save_busy() != 0;
-    if (saving || !cfg_last_save_ok())
+    const ImVec2 box = ImGui::GetWindowPos(), box_size = ImGui::GetWindowSize();
+    skin_panel(ImGui::GetWindowDrawList(), box, ImVec2(box.x + box_size.x, box.y + box_size.y), scale);
+    ImGui::TextUnformatted(menu_text(g_confirm_quit ? UI_MENU_QUIT_CONFIRM : UI_MENU_RESTART_CONFIRM));
+    bool saving = !g_confirm_quit && fs_save_busy() != 0;
+    if (saving || (!g_confirm_quit && !cfg_last_save_ok()))
         ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "%s",
                            menu_text(saving ? UI_MENU_RESTART_SAVING : UI_MENU_SAVE_FAILED));
     ImGui::Spacing();
-    const char *yes = menu_text(UI_MENU_RESTART_YES), *no = menu_text(UI_MENU_RESET_NO);
+    const char *yes = menu_text(g_confirm_quit ? UI_MENU_QUIT : UI_MENU_RESTART_YES), *no = menu_text(UI_MENU_RESET_NO);
     const ImGuiStyle &st = ImGui::GetStyle();
     float bw = fmaxf(ImGui::CalcTextSize(yes).x, ImGui::CalcTextSize(no).x) + st.FramePadding.x * 4;
-    bool close = ImGui::Button(no, ImVec2(bw, 0));
+    bool close = skin_widget_button(no, ImVec2(bw, 0), scale);
     if (ImGui::IsWindowAppearing()) ImGui::SetItemDefaultFocus();
-    ImGui::SameLine();
+    ImGui::SameLine(0, st.ItemSpacing.x + skin_cursor_reach(scale));
     ImGui::BeginDisabled(saving);
-    if (ImGui::Button(yes, ImVec2(bw, 0)) && cfg_save()) {
-        if (restart_rebuild) cheats_rebuild_allow();
-        gfx_window_request_restart();
+    if (skin_widget_button(yes, ImVec2(bw, 0), scale)) {
+        if (g_confirm_quit) {
+            gfx_window_request_close();
+        } else if (cfg_save()) {
+            if (restart_rebuild) cheats_rebuild_allow();
+            gfx_window_request_restart();
+        }
     }
     ImGui::EndDisabled();
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
@@ -1017,7 +1025,6 @@ static void restart_confirm(void) {
     if (close) {
         ImGui::CloseCurrentPopup();
         restart_rebuild = false;
-        opt_focus_key("##restart");   // back on the row it came from
     }
     ImGui::EndPopup();
 }
@@ -1146,9 +1153,8 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
         for (int k = 0; k < TAB_COUNT; k++) {
             char label[128];
             snprintf(label, sizeof label, "  %s  ###tab%d", menu_text(kTabNames[k]), k);   // the id stays per language
-            if (g_title_font) ImGui::PushFont(g_title_font);   // the tab labels in the title face
-            bool shown = ImGui::BeginTabItem(label, nullptr, g_tab_request == k ? ImGuiTabItemFlags_SetSelected : 0);
-            if (g_title_font) ImGui::PopFont();
+            // the tab labels in the title face, on the rows' button (ui/menu_skin.cpp)
+            bool shown = skin_tab_item(label, menu_text(kTabNames[k]), g_tab_request == k ? ImGuiTabItemFlags_SetSelected : 0, scale, g_title_font);
             if (!shown) continue;
             g_tab = k;
             if (g_focus_page == k) {
@@ -1185,18 +1191,20 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
         ImGui::SetCursorPosY(y + st.FramePadding.y);
         ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "%s", menu_text(UI_MENU_SAVE_FAILED));
     }
-    const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
-    float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
+    const char *cont = menu_text(UI_MENU_CONTINUE), *restart = menu_text(UI_MENU_RESTART_YES), *quit = menu_text(UI_MENU_QUIT);
+    float bw = fmaxf(fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(restart).x), ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
     // the save menu's brown buttons, with the game's cursor on the selected one (ui/menu_skin.cpp)
     float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
-    // right-aligned; in a window too narrow for both, from the left edge
-    ImGui::SetCursorPos(ImVec2(fmaxf(st.WindowPadding.x, ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap), y));
+    // right-aligned; in a window too narrow for all three, from the left edge
+    ImGui::SetCursorPos(ImVec2(fmaxf(st.WindowPadding.x, ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 3 - gap * 2), y));
     if (skin_widget_button(cont, ImVec2(bw, 0), scale)) set_open(0);
     ImGui::SameLine(0, gap);
-    if (skin_widget_button(quit, ImVec2(bw, 0), scale)) gfx_window_request_close();
+    if (skin_widget_button(restart, ImVec2(bw, 0), scale)) g_confirm_quit = false, ImGui::OpenPopup("##confirm");
+    ImGui::SameLine(0, gap);
+    if (skin_widget_button(quit, ImVec2(bw, 0), scale)) g_confirm_quit = true, ImGui::OpenPopup("##confirm");
+    restart_confirm(scale);
     menu_sounds_frame();
     bool was_modal = g_modal || binds_modal();
-    if (g_tab != TAB_CONTROLS) g_modal = false;
     if (!was_modal && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
         set_open(0);
     ImGui::End();

@@ -191,9 +191,7 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
         for (int k = 0; k < 4; k++) {
             char label[96];
             snprintf(label, sizeof label, "  %s  ###tab%d", menu_text(tabs[k]), k);
-            ImGui::PushFont(title);
-            bool shown = ImGui::BeginTabItem(label);
-            ImGui::PopFont();
+            bool shown = skin_tab_item(label, menu_text(tabs[k]), 0, scale, title);
             if (!shown) continue;
             ImGui::Spacing();
             opt_reserve_bottom(bottom);
@@ -215,8 +213,6 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
                                             UI_MENU_GAME_ASPECT_32_9};
             opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
             opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
-            static const UiTextId aspect[] = {UI_MENU_ASPECT_FIT, UI_MENU_ASPECT_STRETCH};
-            opt_choice("NX2NAVI_ASPECT", UI_MENU_ASPECT, aspect, 2, UI_MENU_ASPECT_DESC);
             opt_end();
             ImGui::EndTabItem();
         }
@@ -229,11 +225,13 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
         menu_art_draw(ImGui::GetWindowDrawList(), MENU_ART_GUIDE_BAR, ImVec2(win_p.x + st.WindowPadding.x, sy),
                       ImVec2(win_p.x + win_s.x - st.WindowPadding.x, sy + fh), IM_COL32(96, 70, 36, 170));
     }
-    const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
-    float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
+    const char *cont = menu_text(UI_MENU_CONTINUE), *restart = menu_text(UI_MENU_RESTART_YES), *quit = menu_text(UI_MENU_QUIT);
+    float bw = fmaxf(fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(restart).x), ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
     float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
-    ImGui::SetCursorPos(ImVec2(fmaxf(st.WindowPadding.x, ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - gap), y));
+    ImGui::SetCursorPos(ImVec2(fmaxf(st.WindowPadding.x, ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 3 - gap * 2), y));
     skin_widget_button(cont, ImVec2(bw, 0), scale);
+    ImGui::SameLine(0, gap);
+    skin_widget_button(restart, ImVec2(bw, 0), scale);
     ImGui::SameLine(0, gap);
     skin_widget_button(quit, ImVec2(bw, 0), scale);
     ImGui::End();

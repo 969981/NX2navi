@@ -27,7 +27,7 @@ static const char *const kNames[MENU_ART_COUNT] = {
     "LocationDeco_00", "CtrlGuideBG_00", "MessageWindowCommonBase_00",
     "BtnThinBase_01", "BtnThinBase_00", "BtnThinBase_05", "BtnThinBase_04", "BtnThinBase_02",
     "OptionBtnThinCursorGlow_00", "OptionBtnThinCursorLine_00", "SystemCaptionBg_00",
-    "OptionSeparateMark_00", "SystemLine_03",
+    "OptionSeparateMark_00", "SystemLine_03", "MenuHeaderSelect_00",
 };
 // Levels uploaded for each art: the buttons draw it at about half size and smaller, where a line one or two texels wide
 // would break up if sampled from the full image alone.

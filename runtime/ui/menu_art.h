@@ -17,6 +17,7 @@ typedef enum {
     MENU_ART_PANEL_FILL,    // a dark brown panel
     MENU_ART_DIVIDER,       // the options menu's divider ornament
     MENU_ART_DIVIDER_LINE,  // the line beside the ornament, ending in a dot
+    MENU_ART_TAB_SELECT,    // the plate of the selected category in the game's menu header
     MENU_ART_COUNT
 } MenuArt;
 

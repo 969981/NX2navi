@@ -49,6 +49,11 @@ void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, 
 // save menu's Load and Cancel). True when pressed (click, A, Enter). size: as for ImGui::Button.
 bool skin_widget_button(const char *label, ImVec2 size, float s);
 
+// One tab of the bar: ImGui::BeginTabItem drawn as the rows' button, with the game's plate behind the selected tab's
+// lines and its text in gold. id: BeginTabItem's label (it sizes the tab); text: what is shown. font: the label's font,
+// NULL for the current one. True when selected: call ImGui::EndTabItem then.
+bool skin_tab_item(const char *id, const char *text, int flags, float s, ImFont *font);
+
 // The colours the boxes are drawn in, for text on them.
 #define SKIN_TEXT IM_COL32(244, 236, 214, 255)       // labels on a button
 #define SKIN_TEXT_DIM IM_COL32(206, 188, 150, 255)   // notes on a button

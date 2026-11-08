@@ -103,6 +103,7 @@ const ImVec4 kGold(0.93f, 0.76f, 0.38f, 1), kGreen(0.36f, 0.26f, 0.13f, 1), kNav
 const float kBtnW = 489, kBtnH = 133, kBtnL = 20, kBtnT = 19, kBtnBoxH = 95, kBtnCut = 60;
 const float kCurW = 640, kCurH = 173, kCurX = 49, kCurY = 48, kCurCut = 70, kCurScale = 0.72f;
 const float kPanelW = 1200, kPanelH = 427, kPanelM = 53;
+const float kTabL = 25, kTabT = 0, kTabR = 336, kTabB = 151;   // the selected tab's plate in its 360 x 173 texture
 
 bool have_art(std::initializer_list<MenuArt> ids) {
     ImTextureID t;
@@ -317,21 +318,26 @@ void skin_atlas_fill(ImFontAtlas *fa) {
     g_grain_ok = true;
 }
 
+// The button from the game's layers; false while they are not there. plate: the selected tab's plate under the lines.
+static bool button_art(ImDrawList *dl, ImVec2 a, ImVec2 b, float lift, bool dim, bool plate) {
+    if (!have_art({MENU_ART_BTN_RIM, MENU_ART_BTN_FILL, MENU_ART_BTN_GRAIN, MENU_ART_BTN_EDGE, MENU_ART_BTN_LINE})) return false;
+    static const int fill0[3] = {100, 76, 42}, fill1[3] = {128, 99, 58}, grain0[3] = {150, 118, 76}, grain1[3] = {178, 144, 96};
+    static const int grey_fill[3] = {76, 67, 56}, grey_grain[3] = {128, 116, 100};
+    const float t = (b.y - a.y) / kBtnBoxH;
+    btn_layer(dl, MENU_ART_BTN_RIM, a, b, t, rgba(20, 14, 8, 0.85f));
+    btn_layer(dl, MENU_ART_BTN_FILL, a, b, t, dim ? mix(grey_fill, grey_fill, 0, 1) : mix(fill0, fill1, lift, 1));
+    btn_layer(dl, MENU_ART_BTN_GRAIN, a, b, t, dim ? mix(grey_grain, grey_grain, 0, 0.26f) : mix(grain0, grain1, lift, 0.32f), true);
+    if (plate) slice(dl, MENU_ART_TAB_SELECT, a, b, kTabL, kTabT, kTabR, kTabB, 30, t, rgba(232, 186, 104, 0.55f));
+    btn_layer(dl, MENU_ART_BTN_EDGE, a, b, t, dim ? rgba(98, 88, 74, 1) : rgba(140, 116, 74, 1));
+    btn_layer(dl, MENU_ART_BTN_LINE, a, b, t, dim ? rgba(112, 102, 88, 1) : rgba(150 + (int)(24 * lift), 124 + (int)(20 * lift), 80 + (int)(12 * lift), 1));
+    return true;
+}
+
 void skin_button(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, float lift, bool dim) {
     static const int top0[3] = {98, 75, 41}, top1[3] = {122, 95, 55}, bot0[3] = {84, 63, 32}, bot1[3] = {106, 81, 44};
     static const int grey_top[3] = {66, 58, 48}, grey_bot[3] = {56, 49, 40};
     lift = lift < 0 ? 0 : lift > 1 ? 1 : lift;
-    if (have_art({MENU_ART_BTN_RIM, MENU_ART_BTN_FILL, MENU_ART_BTN_GRAIN, MENU_ART_BTN_EDGE, MENU_ART_BTN_LINE})) {
-        static const int fill0[3] = {100, 76, 42}, fill1[3] = {128, 99, 58}, grain0[3] = {150, 118, 76}, grain1[3] = {178, 144, 96};
-        static const int grey_fill[3] = {76, 67, 56}, grey_grain[3] = {128, 116, 100};
-        const float t = (b.y - a.y) / kBtnBoxH;
-        btn_layer(dl, MENU_ART_BTN_RIM, a, b, t, rgba(20, 14, 8, 0.85f));
-        btn_layer(dl, MENU_ART_BTN_FILL, a, b, t, dim ? mix(grey_fill, grey_fill, 0, 1) : mix(fill0, fill1, lift, 1));
-        btn_layer(dl, MENU_ART_BTN_GRAIN, a, b, t, dim ? mix(grey_grain, grey_grain, 0, 0.26f) : mix(grain0, grain1, lift, 0.32f), true);
-        btn_layer(dl, MENU_ART_BTN_EDGE, a, b, t, dim ? rgba(98, 88, 74, 1) : rgba(140, 116, 74, 1));
-        btn_layer(dl, MENU_ART_BTN_LINE, a, b, t, dim ? rgba(112, 102, 88, 1) : rgba(150 + (int)(24 * lift), 124 + (int)(20 * lift), 80 + (int)(12 * lift), 1));
-        return;
-    }
+    if (button_art(dl, a, b, lift, dim, false)) return;
     const float k = 1.0f * s;
     dl->AddRectFilled(a, b, rgba(28, 22, 14, 0.92f));   // the dark rim between the button and what is behind it
     ImVec2 ia(a.x + k, a.y + k), ib(b.x - k, b.y - k);
@@ -472,6 +478,33 @@ bool skin_widget_button(const char *label, ImVec2 size, float s) {
     dl->AddText(ImVec2(floorf((a.x + b.x - ts.x) * 0.5f), floorf((a.y + b.y - ts.y) * 0.5f)), SKIN_TEXT, label, end);
     if (foc || hov) skin_cursor_frame(dl, a, b, s, foc ? 1.0f : 0.55f);
     return pressed;
+}
+
+bool skin_tab_item(const char *id, const char *text, int flags, float s, ImFont *font) {
+    // Dear ImGui keeps the bar's behaviour (selecting, sizing, the D-pad) and lays out the tab with everything it would
+    // draw made invisible; the button and the text go over its rectangle here.
+    static const ImGuiCol hide[] = {ImGuiCol_Tab, ImGuiCol_TabHovered, ImGuiCol_TabSelected, ImGuiCol_TabSelectedOverline, ImGuiCol_TabDimmed,
+                                    ImGuiCol_TabDimmedSelected, ImGuiCol_TabDimmedSelectedOverline, ImGuiCol_Text, ImGuiCol_NavCursor};
+    for (ImGuiCol c : hide) ImGui::PushStyleColor(c, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(12.0f * s, ImGui::GetStyle().ItemInnerSpacing.y));
+    if (font) ImGui::PushFont(font);
+    const bool shown = ImGui::BeginTabItem(id, nullptr, flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor((int)(sizeof hide / sizeof *hide));
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    if (b.x > a.x && b.y > a.y) {
+        b.y -= 4.0f * s;   // clear of the line under the tabs
+        const bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible;
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        if (foc) skin_cursor_glow(dl, a, b, s, 1.0f);
+        const float lift = shown ? 1.0f : hov ? 0.6f : 0.0f;
+        if (!button_art(dl, a, b, lift, false, shown)) skin_button(dl, a, b, s, lift, false);
+        const ImVec2 ts = ImGui::CalcTextSize(text, nullptr, true);
+        dl->AddText(ImVec2(floorf((a.x + b.x - ts.x) * 0.5f), floorf((a.y + b.y - ts.y) * 0.5f)), shown ? SKIN_GOLD : SKIN_TEXT, text);
+        if (foc) skin_cursor_frame(dl, a, b, s, 1.0f);
+    }
+    if (font) ImGui::PopFont();
+    return shown;
 }
 
 void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, float body_px, const char *title,
