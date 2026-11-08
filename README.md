@@ -37,7 +37,7 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
   start, so play does not stop to compile them; a draw that must wait for its pipeline has it built on worker
   threads, never on the game's drawing thread
 - In-game settings menu (F1, or Minus and Plus together on a gamepad) and performance overlay (F10)
-- Keyboard, mouse and gamepads (a DualShock 3 included on Windows) with remapping, Nintendo or Xbox button layout, rumble and gyro; the game follows
+- Keyboard, mouse and gamepads with remapping, Nintendo or Xbox button layout, rumble and gyro; the game follows
   whichever connected gamepad you press
 - Stereo or 5.1 surround sound output
 - Docked or handheld console mode
