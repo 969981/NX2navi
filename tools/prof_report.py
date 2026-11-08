@@ -18,15 +18,28 @@ import sys
 from pathlib import Path
 
 SYM = re.compile(r'^([0-9a-f]{8}) +[0-9a-f]{8} +\d+ {2,}(\S+)$')   # In column empty: object lines have a path:(section) there
+# GNU ld's map (the launcher's link through the MinGW clang driver): a symbol line is 16 spaces, its virtual address in
+# 16 hex digits, spaces and the name; the addresses include the image base, which the __ImageBase symbol (or the PE32+
+# default) gives.
+GNU_SYM = re.compile(r'^ {16}0x([0-9a-f]{16}) +(\S+)$')
+GNU_IMAGE_BASE = 0x140000000
 
 
 def load_map(path):
-    syms = {}
+    syms, gnu = {}, {}
     with open(path, encoding='utf-8', errors='replace') as f:
         for line in f:
-            m = SYM.match(line.rstrip('\n'))
+            line = line.rstrip('\n')
+            m = SYM.match(line)
             if m and '(' not in m.group(2):
                 syms.setdefault(int(m.group(1), 16), m.group(2))
+                continue
+            g = GNU_SYM.match(line)
+            if g and '(' not in g.group(2) and not g.group(2).startswith('.'):
+                gnu.setdefault(int(g.group(1), 16), g.group(2))
+    if gnu and len(gnu) > len(syms):
+        base = next((a for a, n in gnu.items() if n in ('__ImageBase', '___ImageBase')), GNU_IMAGE_BASE)
+        syms = {a - base: n for a, n in gnu.items() if a >= base}
     addrs = sorted(syms)
     return addrs, [syms[a] for a in addrs]
 
