@@ -1196,10 +1196,12 @@ class App:
             cw, ch = X(9), X(12)
             img = self.sprite(('chev', cw, ch, False, 'dim'), lambda: art.chevron(cw, ch, '#d9ccae'))
             c.create_image(x1 - X(16), cy, anchor='e', image=img, tags='dyn')
-            if r.value:   # a value, centred, beside the arrow
-                avail = (x1 - vx0) - X(48)
+            if r.value:   # a value, centred in the cell's room left of the arrow
+                right = x1 - X(16) - cw - X(10)
+                avail = right - vx0 - X(16)
                 vfont = self.fit_font(vfont, r.value, avail, 0.8)
-                c.create_text(cx, cy, text=fit(vfont, r.value, avail), font=vfont, fill=P['value_text'], tags='dyn')
+                c.create_text((vx0 + right) // 2, cy, text=fit(vfont, r.value, avail), font=vfont,
+                              fill=P['value_text'], tags='dyn')
         else:
             color = {'normal': P['value_text'], 'dim': P['dim'], 'salmon': P['salmon']}.get(r.style, P['value_text'])
             avail = (x1 - vx0) - X(20) - (X(21) if r.check else 0)
