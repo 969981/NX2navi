@@ -1826,10 +1826,25 @@ uint64_t vk_mem_mirror_uploaded(void) {
     return n;
 }
 
+// NX2NAVI_FLUSH_SKIP=1: a mirrored pool's flushes are counted but copy nothing of their own. A mirror is made only for a
+// write-watched range (mirror_create refuses the others), so every page the CPU wrote before the submission's snapshot
+// is copied through its page generation anyway; a flush range only added the pages it covers that nobody wrote, about
+// 11 of 71 MiB a frame in the field (2026-11-08). A write after the snapshot is copied at the pool's next sync, as one
+// between two flushes always was.
+static int flush_skip(void) {
+    static int on = -1;
+    if (on < 0) {
+        on = rt_knob("FLUSH_SKIP", "0") == 1;
+        rt_log("mem: mirrored pools' flush ranges %s (NX2NAVI_FLUSH_SKIP)", on ? "are counted, not copied" : "are copied");
+    }
+    return on;
+}
+
 void nvn_pool_flushed(const pool_t *p, uint64_t off, uint64_t size) {
     if (!vk_mirror_on || !size || !p->mem) return;
     plat_inc64(&m_flush_calls);
     plat_add64(&m_flush_bytes, (int64_t)size);
+    if (flush_skip()) return;
     plat_mutex_lock_shared(&pool_lock);
     const pidx_ent *e = pidx_find(&pool_index, (uintptr_t)p->mem, 0);
     PoolRec *r = e && e->key == p ? e->buf : NULL;
