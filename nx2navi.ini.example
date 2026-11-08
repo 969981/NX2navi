@@ -387,3 +387,7 @@
 # names each dirty target that stays on the GPU ("fence write-back skipped-drawn-every-frame") and each one over 65536
 # bytes that went back ("over-default"). Raising it costs a copy per such target and wait.
 # wb_fence_limit = 65536
+# 1: pages of a VRAM-mirrored pool that the GPU wrote and copied back to game memory are not copied up to the mirror
+# again for that write, which already holds them (a write by the game still is). Outdoors this removed about 57 MiB of
+# copies a frame. Default: 0.
+# wb_no_reup = 0
