@@ -1370,6 +1370,15 @@ static int scene_color(VkFormat f) {
 // DLAA (DLSS's picture goes back into the light target, which the tonemap then reads).
 static int srgb8(VkFormat f) { return f == VK_FORMAT_R8G8B8A8_SRGB || f == VK_FORMAT_B8G8R8A8_SRGB; }
 
+double wide_dlss_share(void);   // widescreen.c: the DLSS mode's share of the picture (1 DLAA), 0 off
+
+// The latest evaluation's sizes, for the overlay: 1 while DLSS (or FSR 3.1) ran in the last half second.
+int vk_dlaa_status(unsigned *w, unsigned *h, unsigned *ow, unsigned *oh, int *fsr) {
+    if (!D.on || !D.last || !D.last_eval_ns || plat_now_ns() - D.last_eval_ns > 500000000ull) return 0;
+    *w = D.last->w, *h = D.last->h, *ow = D.last->ow, *oh = D.last->oh, *fsr = fsr3();
+    return 1;
+}
+
 void vk_dlaa_pass(VkExec *ex) {
     const VkExecTarget *c = &ex->color[0], *z = &ex->depth;
     if (!dl_active() || D.done) return;
@@ -1417,7 +1426,11 @@ void vk_dlaa_pass(VkExec *ex) {
     if (!deferred) {   // Ocarina's shape: the output pass ends the scene and runs DLSS
         int one = ex->pass_ncolor == 1 && c->image && !z->image && c->image != D.color.image && c->samples <= 1 &&
                   !c->is3d;
-        if (one && c->width > D.color.width && c->height > D.color.height) {
+        // the output pass is the picture's size, the scene over the mode's share: at Ultra Performance (854 wide) a
+        // 960x540 post pass comes first, and DLSS wrote there, which left a 540-line picture stretched to the output
+        double share = wide_dlss_share();
+        int big = share <= 0 || share >= 1 || c->width >= 0.95 * D.color.width / share;
+        if (one && big && c->width > D.color.width && c->height > D.color.height) {
             D.ended = D.done = D.up = 1;
             evaluate(ex, c);
         } else if (one && srgb8(c->format) && c->width == D.color.width &&
