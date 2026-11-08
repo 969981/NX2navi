@@ -516,6 +516,14 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                "Turning DLSS or FSR 3.1 on or off, or changing between them, takes effect after a "
                                "restart; the mode changes at once.",
     [UI_MENU_UPSCALING_DLSS_NOTE] = "DLSS or FSR 3.1 on or off: after restart",
+    [UI_MENU_UPSCALING_DESC_FSR] = "How the picture is made smooth and fitted to the window. Bilinear: plain scaling. AMD FSR "
+                                   "1: sharper edges and detail when the window is larger than the picture (strength "
+                                   "below). AMD FSR 3.1 (amd_fidelityfx_vk.dll next to the game's .exe) renders the 3D "
+                                   "scene at its mode's share of the picture and scales it up: Native AA 100 %, Quality "
+                                   "67 %, Balanced 58 %, Performance 50 %, Ultra Performance 33 %. The HUD is not touched. "
+                                   "Turning FSR 3.1 on or off takes effect after a restart; the mode changes at once. "
+                                   "NVIDIA DLSS is not listed: it runs on NVIDIA RTX GPUs only.",
+    [UI_MENU_UPSCALING_FSR_NOTE] = "FSR 3.1 on or off: after restart",
     [UI_MENU_FRAMEGEN] = "Frame generation",
     [UI_MENU_FRAMEGEN_DESC] = "Shows a generated frame between every two the game draws, for about twice the frame rate "
                               "on a fast display. It needs DLSS or FSR 3.1 under Upscaling (any mode), whose motion "
@@ -528,6 +536,12 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_HDR_ENHANCED] = "Enhanced", [UI_MENU_HDR_NATIVE] = "Native (the game's)",
     [UI_MENU_FRAMEGEN_NOTE] = "after restart; needs DLSS or FSR 3.1",
     [UI_MENU_FRAMEGEN_NEEDS] = "choose a DLSS or FSR 3.1 mode under Upscaling first",
+    [UI_MENU_FRAMEGEN_NEEDS_FSR] = "choose an FSR 3.1 mode under Upscaling first",
+    [UI_MENU_FRAMEGEN_NOTE_FSR] = "after restart; needs FSR 3.1",
+    [UI_MENU_FRAMEGEN_DESC_FSR] = "Shows a generated frame between every two the game draws, for about twice the frame "
+                                  "rate on a fast display. It needs FSR 3.1 under Upscaling (any mode), whose motion "
+                                  "vectors it uses, and runs on any GPU (amd_fidelityfx_vk.dll next to the game's .exe). "
+                                  "It pauses while this menu is open. Takes effect after a restart.",
     [UI_MENU_GAME_RES] = "Resolution",
     [UI_MENU_GAME_RES_DESC] = "The height of the game's picture: 1440p is the game's own; higher draws a sharper picture "
                               "and its scene in proportion, at a matching cost on the graphics card. Native: the "

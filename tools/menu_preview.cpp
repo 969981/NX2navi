@@ -5,7 +5,7 @@
 // Without the game's files the window has its plain border in place of the game's ornamented frame, and the given
 // font stands in for the game's.
 //
-// tools/menu_preview.py builds and runs it:  menu_preview <font.ttf> <scene: menu | overlay> <width> <height> <out.rgba>
+// tools/menu_preview.py builds and runs it:  menu_preview <font.ttf> <scene: menu | overlay | boot> <width> <height> <out.rgba>
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -193,6 +193,16 @@ static void scene_overlay(float w, float h, float scale) {
     perf_panel_draw(&p, w, scale);
 }
 
+static void scene_boot(float w, float h, float scale, ImFont *title) {
+    // the boot screen's box over the black the window shows then (menu.cpp menu_boot_frame), half way through the
+    // pipelines
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 255));
+    char step[160];
+    snprintf(step, sizeof step, ui_text(UI_BOOT_PIPELINES), 1603LL, 3235LL);
+    skin_boot_panel(ImGui::GetForegroundDrawList(), title, title->FontSize, ImGui::GetFont(), ImGui::GetFontSize(),
+                    ui_text(UI_BOOT_TITLE), step, ui_text(UI_BOOT_HINT), 1603.0f / 3235.0f, 0, w, h, scale);
+}
+
 // ---- the rasteriser: every triangle of the draw lists, its colour times the font atlas, blended over the image
 
 struct Image {
@@ -281,7 +291,7 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
 
 int main(int argc, char **argv) {
     if (argc != 6) {
-        fprintf(stderr, "usage: %s <font.ttf> <menu|overlay> <width> <height> <out.rgba>\n", argv[0]);
+        fprintf(stderr, "usage: %s <font.ttf> <menu|overlay|boot> <width> <height> <out.rgba>\n", argv[0]);
         return 2;
     }
     const char *font = argv[1], *scene = argv[2], *out = argv[5];
@@ -308,6 +318,7 @@ int main(int argc, char **argv) {
     for (int frame = 0; frame < 4; frame++) {   // a few frames: sizes settle and the first row takes the cursor
         ImGui::NewFrame();
         if (!strcmp(scene, "menu")) scene_menu((float)w, (float)h, scale, title, frame == 0);
+        else if (!strcmp(scene, "boot")) scene_boot((float)w, (float)h, scale, title);
         else scene_overlay((float)w, (float)h, scale);
         ImGui::Render();
     }

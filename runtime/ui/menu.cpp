@@ -211,9 +211,8 @@ static float menu_scale(uint32_t h) {
     return ((float)h >= least ? (float)h : least) / 1080.0f;
 }
 
-// The gold of the title and its Triforce, and the panel's umber for the boot screen (the rest of the menu's colours:
-// ui/menu_skin.cpp skin_style).
-static const ImVec4 kGold(0.93f, 0.76f, 0.38f, 1), kNavy(0.075f, 0.058f, 0.042f, 0.95f);
+// The gold of the title and its Triforce (the rest of the menu's colours: ui/menu_skin.cpp skin_style).
+static const ImVec4 kGold(0.93f, 0.76f, 0.38f, 1);
 
 // The Triforce, its top at (x, y), h high, drawn with the title.
 static void triforce(ImDrawList *dl, float x, float y, float h, ImU32 col) {
@@ -697,9 +696,21 @@ static const char *present_note(void) {
 
 // ---- the tabs
 
+// The PCI vendor of the GPU the game renders on (menu_overlay_frame reads it from the device it is given; 0 before the
+// first frame). DLSS runs on NVIDIA GPUs only, so the rows below leave it out elsewhere (AMD, Intel).
+static std::atomic<uint32_t> g_gpu_vendor;
+static VkPhysicalDevice g_gpu_vendor_of;
+static bool dlss_offered(void) {
+    uint32_t v = g_gpu_vendor.load(std::memory_order_relaxed);
+    return v == 0 || v == 0x10de;   // unknown (no frame yet): as before, offered
+}
+
 // One upscaling choice over three settings: NX2NAVI_UPSCALER (how the picture is fitted to the window), NX2NAVI_DLAA
-// (DLSS on) and NX2NAVI_DLSS (its mode, the render scale: widescreen.c wide_present). A DLSS mode fits the picture with
-// bilinear, DLSS having made it; the model is NVIDIA's own for the mode (vk_dlaa.c evaluate, dlss_preset at its default).
+// (DLSS or FSR 3.1 on) with NX2NAVI_TAA (which of them) and NX2NAVI_DLSS (the mode, the render scale: widescreen.c
+// wide_present). A temporal mode fits the picture with bilinear, the upscaler having made it; DLSS's model is NVIDIA's own
+// for the mode (vk_dlaa.c evaluate, dlss_preset at its default). The list: bilinear, FSR 1, the DLSS modes where DLSS
+// runs (dlss_offered), the FSR 3.1 modes; a DLSS mode still set where DLSS does not run stays listed last until another
+// choice replaces it, so the row shows what is set.
 static void row_upscaling(void) {
     static const char *const modes[] = {"dlaa", "quality", "balanced", "performance", "ultra_performance"};
     static const UiTextId mode_names[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
@@ -707,28 +718,51 @@ static void row_upscaling(void) {
     // FSR 3.1's modes take the same render scales as DLSS's (Native AA is FSR's name for DLAA's full size)
     static const UiTextId fsr_names[] = {UI_MENU_FSR3_NATIVE, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                          UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
-    static char dl[10][96];
-    const char *names[12] = {menu_text(UI_MENU_UPSCALER_BILINEAR), menu_text(UI_MENU_UPSCALER_FSR)};
-    for (int i = 0; i < 5; i++) {
-        snprintf(dl[i], sizeof dl[i], i ? "DLSS %s" : "NVIDIA %s", menu_text(mode_names[i]));
-        snprintf(dl[5 + i], sizeof dl[5 + i], "AMD FSR 3.1 %s", menu_text(fsr_names[i]));
-        names[2 + i] = dl[i], names[7 + i] = dl[5 + i];
-    }
-    int cur = strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") ? 0 : 1;
+    enum { BILINEAR, FSR1, DLSS, FSR3 };
+    struct Entry { int kind, mode; };
+    static char text[10][96];
+    Entry list[12];
+    const char *names[12];
+    int n = 0;
+    auto add = [&](int kind, int mode) {
+        list[n] = {kind, mode};
+        if (kind == BILINEAR) names[n] = menu_text(UI_MENU_UPSCALER_BILINEAR);
+        else if (kind == FSR1) names[n] = menu_text(UI_MENU_UPSCALER_FSR);
+        else {
+            char *t = text[(kind == FSR3 ? 5 : 0) + mode];
+            if (kind == DLSS) snprintf(t, sizeof text[0], mode ? "DLSS %s" : "NVIDIA %s", menu_text(mode_names[mode]));
+            else snprintf(t, sizeof text[0], "AMD FSR 3.1 %s", menu_text(fsr_names[mode]));
+            names[n] = t;
+        }
+        n++;
+    };
+    // what is set now
+    Entry now = {strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") ? BILINEAR : FSR1, 0};
     if (cfg_bool("NX2NAVI_DLAA")) {
-        int base = strcmp(cfg_value("NX2NAVI_TAA"), "fsr3") ? 2 : 7;
-        cur = base;
+        now = {strcmp(cfg_value("NX2NAVI_TAA"), "fsr3") ? DLSS : FSR3, 0};
         for (int i = 0; i < 5; i++)
-            if (!strcmp(cfg_value("NX2NAVI_DLSS"), modes[i])) cur = base + i;
+            if (!strcmp(cfg_value("NX2NAVI_DLSS"), modes[i])) now.mode = i;
     }
-    int nv = opt_choice_index("NX2NAVI_UPSCALER", UI_MENU_UPSCALING, names, 12, cur, 1, UI_MENU_UPSCALING_DESC,
-                              cur >= 2 ? menu_text(UI_MENU_UPSCALING_DLSS_NOTE) : nullptr);
-    if (nv < 0) return;
-    opt_apply("NX2NAVI_UPSCALER", nv == 1 ? "fsr" : "bilinear");
-    opt_apply("NX2NAVI_DLAA", nv >= 2 ? "1" : "0");
-    if (nv < 2) opt_apply("NX2NAVI_FRAMEGEN", "off");   // it needs DLSS's or FSR 3.1's motion vectors (row_framegen)
-    if (nv >= 2) opt_apply("NX2NAVI_DLSS", modes[(nv - 2) % 5]);
-    if (nv >= 2) opt_apply("NX2NAVI_TAA", nv >= 7 ? "fsr3" : "dlss");
+    const bool dlss = dlss_offered();
+    add(BILINEAR, 0);
+    add(FSR1, 0);
+    for (int i = 0; dlss && i < 5; i++) add(DLSS, i);
+    for (int i = 0; i < 5; i++) add(FSR3, i);
+    if (!dlss && now.kind == DLSS) add(DLSS, now.mode);
+    int cur = 0;
+    for (int i = 0; i < n; i++)
+        if (list[i].kind == now.kind && list[i].mode == now.mode) cur = i;
+    bool temporal = now.kind >= DLSS;
+    int nv = opt_choice_index("NX2NAVI_UPSCALER", UI_MENU_UPSCALING, names, n, cur, 1,
+                              dlss ? UI_MENU_UPSCALING_DESC : UI_MENU_UPSCALING_DESC_FSR,
+                              temporal ? menu_text(dlss ? UI_MENU_UPSCALING_DLSS_NOTE : UI_MENU_UPSCALING_FSR_NOTE) : nullptr);
+    if (nv < 0 || nv >= n) return;
+    const Entry e = list[nv];
+    opt_apply("NX2NAVI_UPSCALER", e.kind == FSR1 ? "fsr" : "bilinear");
+    opt_apply("NX2NAVI_DLAA", e.kind >= DLSS ? "1" : "0");
+    if (e.kind < DLSS) opt_apply("NX2NAVI_FRAMEGEN", "off");   // it needs DLSS's or FSR 3.1's motion vectors (row_framegen)
+    if (e.kind >= DLSS) opt_apply("NX2NAVI_DLSS", modes[e.mode]);
+    if (e.kind >= DLSS) opt_apply("NX2NAVI_TAA", e.kind == FSR3 ? "fsr3" : "dlss");
 }
 
 // HDR (vk_hdr.c), after a restart: off, the runtime's own (the game's tonemap kept above SDR white) or the game's native
@@ -748,7 +782,8 @@ static void row_hdr(void) {
 // Frame generation (vk_fg.cpp), after a restart; it needs a temporal upscaler's motion vectors
 static void row_framegen(void) {
     // the generated frames are made from DLSS's or FSR 3.1's motion vectors: without one of them it would do nothing
-    if (!cfg_bool("NX2NAVI_DLAA")) opt_disable_next(UI_MENU_FRAMEGEN_NEEDS);
+    const bool dlss = dlss_offered();
+    if (!cfg_bool("NX2NAVI_DLAA")) opt_disable_next(dlss ? UI_MENU_FRAMEGEN_NEEDS : UI_MENU_FRAMEGEN_NEEDS_FSR);
     static const char *const values[] = {"off", "fsr3", "dlss"};
     const char *names[] = {menu_text(UI_MENU_FRAMEGEN_OFF), "AMD FSR 3.1", "NVIDIA DLSS"};
     const char *v = cfg_value("NX2NAVI_FRAMEGEN");
@@ -756,9 +791,10 @@ static void row_framegen(void) {
     // NVIDIA DLSS (vk_dlssg.c) is listed only while it is set: Streamline now starts and takes the swapchain, but presents
     // no generated frames yet (one presented per frame, status OK)
     int n = cur == 2 ? 3 : 2;
-    int nv = opt_choice_index("NX2NAVI_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, cur, 0, UI_MENU_FRAMEGEN_DESC,
-                              menu_text(UI_MENU_FRAMEGEN_NOTE));
-    if (nv >= 0) opt_apply("NX2NAVI_FRAMEGEN", values[nv]);
+    int nv = opt_choice_index("NX2NAVI_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, cur, 0,
+                              dlss ? UI_MENU_FRAMEGEN_DESC : UI_MENU_FRAMEGEN_DESC_FSR,
+                              menu_text(dlss ? UI_MENU_FRAMEGEN_NOTE : UI_MENU_FRAMEGEN_NOTE_FSR));
+    if (nv >= 0 && nv < n) opt_apply("NX2NAVI_FRAMEGEN", values[nv]);
 }
 
 // The picture's height (widescreen.c picture_height): the game's 1440 or more.
@@ -1246,6 +1282,12 @@ static void perf_draw(const MenuTarget *t, float scale) {
 
 extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
     *shot = NULL;
+    if (t->phys && t->phys != g_gpu_vendor_of) {   // the GPU's vendor for the rows that depend on it (dlss_offered)
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(t->phys, &props);
+        g_gpu_vendor.store(props.vendorID, std::memory_order_relaxed);
+        g_gpu_vendor_of = t->phys;
+    }
     menu_art_start();      // the game's interface textures decode on a worker from the first present on
     cheats_frame(frame);   // the data cheats and the buttons of the cheats that need them held
     if (!g_test.parsed) test_parse();
@@ -1343,8 +1385,8 @@ extern "C" void menu_boot_set(int phase, long long done, long long total) {
     g_booting.store(phase >= 0, std::memory_order_release);
 }
 
-// A panel in the middle of the screen in the menu's colours: the title, the step with its count and a bar, and why it
-// happens. The input queue is left alone: keys pressed now reach the menu once the game runs.
+// A box in the middle of the screen in the menu's look (ui/menu_skin.cpp skin_boot_panel): the title, the step with its
+// count and a bar, and why it happens. The input queue is left alone: keys pressed now reach the menu once the game runs.
 extern "C" int menu_boot_frame(const MenuTarget *t) {
     if (g_failed_flag() || g_boot_phase.load(std::memory_order_acquire) < 0) return 0;   // -1: done, a black frame
     if (!g_ctx_ok) make_context();
@@ -1378,41 +1420,16 @@ extern "C" int menu_boot_frame(const MenuTarget *t) {
         snprintf(step, sizeof step, "%s", ui_text(UI_BOOT_STARTING));
     const char *title = ui_text(UI_BOOT_TITLE), *hint = ui_text(UI_BOOT_HINT);
 
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
-    float w = (float)t->width, h = (float)t->height, pad = 34 * scale, gap = 16 * scale;
+    // the box in the menu's look (ui/menu_skin.cpp): a filled bar while there is a count, else a sweeping segment
     ImFont *body = ImGui::GetFont();
     float body_px = ImGui::GetFontSize();
     ImFont *head = g_title_font ? g_title_font : body;
     float head_px = g_title_font ? g_title_font->FontSize : body_px * 1.2f;
-    ImVec2 ts = head->CalcTextSizeA(head_px, FLT_MAX, 0, title), ss = body->CalcTextSizeA(body_px, FLT_MAX, 0, step),
-           hs = body->CalcTextSizeA(body_px * 0.8f, FLT_MAX, 0, hint);
-    float bar_h = 10 * scale;
-    float pw = fmaxf(fmaxf(ts.x, hs.x), 560 * scale) + pad * 2;
-    float ph = pad + ts.y + gap * 1.5f + ss.y + gap * 0.6f + bar_h + gap * 1.4f + hs.y + pad;
-    ImVec2 a((w - pw) / 2, (h - ph) / 2), b(a.x + pw, a.y + ph);
-    ImU32 gold = ImGui::GetColorU32(kGold), panel = ImGui::GetColorU32(kNavy);
-    ImU32 text = IM_COL32(236, 224, 196, 255), dim = IM_COL32(236, 224, 196, 150);
-    dl->AddRectFilled(a, b, panel, 10 * scale);
-    dl->AddRect(a, b, IM_COL32(237, 194, 97, 140), 10 * scale, 0, 1.5f * scale);
-    float y = a.y + pad;
-    dl->AddText(head, head_px, ImVec2((w - ts.x) / 2, y), gold, title);
-    y += ts.y + gap * 1.5f;
-    dl->AddText(body, body_px, ImVec2(a.x + pad, y), text, step);
-    y += ss.y + gap * 0.6f;
-    ImVec2 ba(a.x + pad, y), bb(b.x - pad, y + bar_h);
-    dl->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 28), bar_h / 2);
-    if ((phase == 1 || phase == 2) && total > 0) {
-        float f = (float)done / (float)total;
-        f = f < 0 ? 0 : f > 1 ? 1 : f;
-        if (f > 0) dl->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), gold, bar_h / 2);
-    } else {   // no count yet: a short segment sweeps along the bar
-        float span = (bb.x - ba.x) * 0.2f, run = (bb.x - ba.x) - span;
-        float s = (float)fmod((now - g_boot_t0) / 1e9 * 0.8, 2.0);
-        float x = ba.x + run * (s < 1 ? s : 2 - s);
-        dl->AddRectFilled(ImVec2(x, ba.y), ImVec2(x + span, bb.y), gold, bar_h / 2);
-    }
-    y += bar_h + gap * 1.4f;
-    dl->AddText(body, body_px * 0.8f, ImVec2((w - hs.x) / 2, y), dim, hint);
+    float frac = -1;
+    if ((phase == 1 || phase == 2) && total > 0) frac = done <= 0 ? 0 : done >= total ? 1 : (float)done / (float)total;
+    float s = (float)fmod((now - g_boot_t0) / 1e9 * 0.8, 2.0);
+    skin_boot_panel(ImGui::GetForegroundDrawList(), head, head_px, body, body_px, title, step, hint, frac, s < 1 ? s : 2 - s,
+                    (float)t->width, (float)t->height, scale);
     ImGui::Render();
     return ImGui::GetDrawData()->TotalVtxCount > 0;
 }

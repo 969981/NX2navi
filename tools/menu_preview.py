@@ -65,7 +65,7 @@ def main():
     w, h = (int(x) for x in a.size.lower().split('x'))
     a.out.mkdir(parents=True, exist_ok=True)
     exe = build(a.out)
-    for scene in ('menu', 'overlay'):
+    for scene in ('menu', 'overlay', 'boot'):
         raw = a.out / f'{scene}.rgba'
         if subprocess.run([str(exe), font, scene, str(w), str(h), str(raw)]).returncode:
             sys.exit(f'the {scene} scene failed')

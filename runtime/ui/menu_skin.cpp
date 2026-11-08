@@ -3,6 +3,7 @@
 // in with a diamond and a curl at alternate corners), the options menu's cursor (a 3 px white frame with a soft
 // white-blue glow) and its divider ornament (traced: two pointed lens ends, S-waves into spiral hooks and a diamond knot
 // under the middle, in a 120 x 38 box with its centre at (60, 21)).
+#include <float.h>
 #include <math.h>
 
 #include "imgui.h"
@@ -290,4 +291,41 @@ bool skin_widget_button(const char *label, ImVec2 size, float s) {
     dl->AddText(ImVec2(floorf((a.x + b.x - ts.x) * 0.5f), floorf((a.y + b.y - ts.y) * 0.5f)), SKIN_TEXT, label, end);
     if (foc || hov) skin_cursor_frame(dl, a, b, s, foc ? 1.0f : 0.55f);
     return pressed;
+}
+
+void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, float body_px, const char *title,
+                     const char *step, const char *hint, float frac, float sweep, float w, float h, float s) {
+    const float pad = 38 * s, gap = 16 * s, bar_h = 12 * s, fh = skin_filigree_height(s);
+    ImVec2 ts = head->CalcTextSizeA(head_px, FLT_MAX, 0, title), ss = body->CalcTextSizeA(body_px, FLT_MAX, 0, step),
+           hs = body->CalcTextSizeA(body_px * 0.8f, FLT_MAX, 0, hint);
+    float pw = fminf(fmaxf(fmaxf(fmaxf(ts.x, hs.x), ss.x), 560 * s) + pad * 2, w - 24 * s);
+    float ph = pad + ts.y + fh + gap * 0.4f + ss.y + gap * 0.7f + bar_h + gap * 1.4f + hs.y + pad;
+    ImVec2 a(floorf((w - pw) / 2), floorf((h - ph) / 2)), b(a.x + pw, a.y + ph);
+    skin_panel(dl, a, b, s);
+    float y = a.y + pad;
+    dl->AddText(head, head_px, ImVec2(floorf((w - ts.x) / 2), y), SKIN_GOLD, title);
+    y += ts.y;
+    skin_filigree(dl, a.x + pad, b.x - pad, y + fh * 0.5f, s);
+    y += fh + gap * 0.4f;
+    dl->AddText(body, body_px, ImVec2(a.x + pad, y), SKIN_TEXT, step);
+    y += ss.y + gap * 0.7f;
+    // the bar: a sunken track with the frames' brown edge, filled in gold from the left
+    ImVec2 ba(a.x + pad, y), bb(b.x - pad, y + bar_h);
+    dl->AddRectFilled(ba, bb, rgba(12, 9, 6, 0.85f), 2 * s);
+    float x0 = ba.x + 2 * s, x1 = bb.x - 2 * s, top = ba.y + 2 * s, bot = bb.y - 2 * s;
+    auto fill = [&](float from, float to) {
+        if (to - from < 1) return;
+        dl->AddRectFilledMultiColor(ImVec2(from, top), ImVec2(to, bot), rgba(246, 214, 128, 1), rgba(246, 214, 128, 1),
+                                    rgba(196, 148, 66, 1), rgba(196, 148, 66, 1));
+        dl->AddLine(ImVec2(from, top + 0.5f * s), ImVec2(to, top + 0.5f * s), rgba(255, 240, 196, 0.6f), 1.0f * s);
+    };
+    if (frac >= 0) {
+        fill(x0, x0 + (x1 - x0) * fminf(frac, 1.0f));
+    } else {
+        float span = (x1 - x0) * 0.2f, run = (x1 - x0) - span, at = sweep < 0 ? 0 : sweep > 1 ? 1 : sweep;
+        fill(x0 + run * at, x0 + run * at + span);
+    }
+    dl->AddRect(ba, bb, rgba(110, 90, 58, 1), 2 * s, 0, 1.3f * s);
+    y += bar_h + gap * 1.4f;
+    dl->AddText(body, body_px * 0.8f, ImVec2(floorf((w - hs.x) / 2), y), rgba(214, 198, 166, 0.85f), hint);
 }
