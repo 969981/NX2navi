@@ -959,10 +959,17 @@ int vk_texture_commit_low(void) { return __atomic_load_n(&commit_low, __ATOMIC_R
 // again, empty if it is a render target. Under commit pressure that a system-managed page file never relieves, dropping
 // young ones destroyed 2160p render targets about every frame for whole sessions. Frame generation also reads a frame's
 // depth target at the host present (vk_dlssg.c vk_dlssg_frame tags it), after the blit deferred destruction waits for.
+// A released entry that a lookup still reached within STALE_FRAMES presents is not stale either: the game finalizes
+// some texture objects and keeps sampling their descriptor slots (Ocarina's RGB9E5 view of its full-size post-process
+// picture, at a fixed address), and the slot's cached entry is touched on every submit that uses it (touch). Dropped
+// under commit pressure, that picture was destroyed and made again at the next lookup every 121 presents; where it
+// started without its content, that frame showed a dark picture in the wrong colours (issues #253 and #268).
 #define STALE_FRAMES 120
 static int idle(const Tex *e, uint64_t now) {
     return look_round - e->use_round >= IDLE_ROUNDS && now - e->use_frame >= STALE_FRAMES;
 }
+
+static uint64_t n_stale_kept;   // times drop_stale left a released entry a lookup still used (the first is logged)
 
 static void drop_stale(uint64_t keep, uint64_t *count) {
     uint64_t now = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
@@ -972,6 +979,12 @@ static void drop_stale(uint64_t keep, uint64_t *count) {
             if (dropped == PRESSURE_STEP || rel_bytes <= keep) return;
             next = e->rel_next;
             if (!e->bytes || (!any && !comes_back_intact(e))) continue;
+            if (now - e->use_frame < STALE_FRAMES) {   // still sampled through a slot (above)
+                if (!n_stale_kept++)
+                    rt_log("vk: a released %ux%u texture (VkFormat %d) at %#llx is still in use: kept, not dropped as stale",
+                           e->pub.width, e->pub.height, (int)e->f.vk, (unsigned long long)e->key.addr);
+                continue;
+            }
             destroy_tex(e);
             dropped++, (*count)++;
         }
