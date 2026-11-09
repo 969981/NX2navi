@@ -151,6 +151,7 @@ typedef struct { uint64_t base, size; uint32_t state, attr, perm, ipc, device, p
 void mem_init(void);                                       // reserve every region; on a collision re-run the process
                                                            // (up to 20 times, NX2NAVI_REEXEC), then fatal
 const RtGuestLayout *mem_layout(void);
+void mem_guest_census(uint64_t frame);   // NX2NAVI_TRACE=perf: committed bytes per guest region
 uint32_t mem_set_heap_size(uint64_t size, uint64_t *addr);                      // 0x01
 uint32_t mem_set_permission(uint64_t a, uint64_t n, uint32_t perm);             // 0x02
 uint32_t mem_set_attribute(uint64_t a, uint64_t n, uint32_t mask, uint32_t at); // 0x03
@@ -365,3 +366,4 @@ int probe_vkmem(void), probe_vkexec(void), probe_astc(void);                 // 
 int probe_movie(void);                                     // movie_probe.c: host VP9 movie::Decoder on one RomFS movie
 int vk_pipeline_prepare_shaders(void);                     // vk_pipeline.c: --prepare-shaders (tools/prepare_shaders.py)
 int vk_pipeline_warm_shaders(void);                        // vk_pipeline.c: --warm-shaders (tools/build_game.py)
+int vk_pipeline_spirv_selftest(void);                      // vk_pipeline.c: --selftest, the SPIR-V rewrites without a device

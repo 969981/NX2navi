@@ -8,6 +8,9 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
   server with certificates the openssl command makes (an expired one, an unknown one), the clock comparison
 - feed: GitHub releases (stable, preview, private with a token) and a plain manifest URL, served locally
 - updater: staging a release, switching, rollback, pruning, refusing unsafe archives
+- background updates: a release staged beside the running version without switching to it, the ready marker, a
+  staged release found and installed after a restart, no install while the game runs, the install once it exited,
+  nothing by itself with Install Updates Automatically off, a failed staging tried again after the next check
 - gamefiles: the .bfotf font wrapping and zstd dictionaries, on a font of this system made into a fake RomFS
 - the button art of a release: the files tools/prompt_art.py copies, and the packages and tools the prompts need
 - make_game.py: a synthetic .nup through the check, exefs and romfs steps with --events, skipped steps on a second
@@ -298,6 +301,17 @@ class GameIniTest(Tmp):
         self.assertTrue((self.tmp / 'nx2navi.ini').is_dir())
 
 
+class RebuildArgsTest(Tmp):
+    """Rebuild the Game compiles the game's code for this processor's level (--retune); an update keeps the level its
+    objects were compiled for, so that it compiles only what changed (tools/make_game.py lifted_level)."""
+
+    def test_retune_only_for_rebuild_the_game(self):
+        self.assertIn('--retune', build.rebuild_args(self.layout, 'G:/game', True))
+        self.assertNotIn('--retune', build.rebuild_args(self.layout, 'G:/game'))
+        self.assertTrue(jobs.RebuildJob.retune)
+        self.assertFalse(jobs.ContinueUpdateJob.retune)
+
+
 class SettingsTest(Tmp):
     def test_roundtrip_and_reset(self):
         s = settings.Settings(self.layout.settings)
@@ -471,6 +485,41 @@ class ToolchainTest(Tmp):
 # ---------------------------------------------------------------- net
 
 class NetTest(Tmp):
+    def test_get_bytes_retries_a_cut_connection(self):
+        """A connection reset (WinError 10054 during Gather Build Tools) or a server error is tried again; a 404 is not."""
+        import urllib.error
+        calls = []
+
+        def flaky(url, headers=None, timeout=30, version='dev'):
+            calls.append(url)
+            if len(calls) == 1:
+                raise ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host')
+            if len(calls) == 2:
+                raise urllib.error.HTTPError(url, 503, 'busy', {}, None)
+            return io.BytesIO(b'{"ok": 1}')
+
+        with mock.patch.object(net, 'request', flaky), mock.patch.object(net.time, 'sleep') as slept:
+            self.assertEqual(net.get_json('https://example.invalid/x.json'), {'ok': 1})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(slept.call_count, 2)
+
+        def missing(url, headers=None, timeout=30, version='dev'):
+            calls.append(url)
+            raise urllib.error.HTTPError(url, 404, 'not found', {}, None)
+
+        calls.clear()
+        with mock.patch.object(net, 'request', missing), mock.patch.object(net.time, 'sleep'):
+            with self.assertRaises(urllib.error.HTTPError):
+                net.get_bytes('https://example.invalid/missing')
+        self.assertEqual(len(calls), 1)
+
+        def down(url, headers=None, timeout=30, version='dev'):
+            raise ConnectionResetError(10054, 'reset')
+
+        with mock.patch.object(net, 'request', down), mock.patch.object(net.time, 'sleep'):
+            with self.assertRaises(ConnectionResetError):   # every try failed: the last error goes up
+                net.get_bytes('https://example.invalid/down')
+
     def test_download_resume_and_checks(self):
         data = os.urandom(3 * net.CHUNK + 123)
         (self.tmp / 'f.bin').write_bytes(data)
@@ -687,6 +736,210 @@ class FeedTest(Tmp):
         with self.assertRaises(updater.UpdateError):
             updater.stage_app(self.layout, rel)
         self.assertFalse((self.layout.apps / '1.0.2').exists())
+
+
+class BackgroundUpdateTest(Tmp):
+    """An update fetched while the launcher runs (updater.stage, jobs.StageJob, jobs.BackgroundUpdate): staged beside
+    the running version without switching to it, and installed only when the game is not running, by itself only
+    with Install Updates Automatically on. The releases come from the local server through a URL feed."""
+
+    def setUp(self):
+        super().setUp()
+        self.srv = Server(self.tmp)
+        self.addCleanup(self.srv.close)
+        self.layout = self.installed('0.4.0')
+        self.game = str(self.tmp / 'game')
+        self.running = False   # what build.game_running answers: a copy of the game the launcher did not start
+        saved = build.game_running
+        build.game_running = lambda game_dir, exe='ocarina.exe': self.running
+        self.addCleanup(setattr, build, 'game_running', saved)
+        self.restarts = []
+
+    def installed(self, ver):
+        """An installed launcher's folder (not a checkout) running version ver on the Python py-1."""
+        root = self.tmp / 'nx'
+        app = root / 'app' / ver
+        (app / 'launcher').mkdir(parents=True)
+        (app / 'launcher' / 'start.pyw').write_text('')
+        (app / 'VERSION').write_text(ver + '\n')
+        (root / 'app' / 'current.txt').write_text(ver + '\n')
+        (root / 'python').mkdir()
+        (root / 'python' / 'runtime-id.txt').write_text('py-1\n')
+        layout = Layout(root=root, app=app).ensure()
+        self.assertFalse(layout.dev)
+        return layout
+
+    def publish(self, ver, runtime='', pre=False, damaged=False):
+        """A release of ver on the local server, read through a URL feed; runtime: the id of the Python it brings;
+        damaged: its manifest gives the wrong sha256 for the app archive."""
+        z = make_app_zip(self.tmp, ver)
+        m = manifest_for(z, ver)
+        if runtime:
+            r = self.tmp / f'NX2navi-runtime-{runtime}.zip'
+            with zipfile.ZipFile(r, 'w') as zf:
+                zf.writestr('python.exe', 'MZ')
+                zf.writestr('runtime-id.txt', runtime + '\n')
+            m['runtime'] = {'id': runtime, 'name': r.name, 'size': r.stat().st_size, 'sha256': sha(r.read_bytes())}
+        if damaged:
+            m['app']['sha256'] = '0' * 64
+        (self.tmp / f'm-{ver}.json').write_text(json.dumps(m))
+        rel = feed.latest({'type': 'url', 'url': self.srv.url + f'm-{ver}.json'})
+        rel.prerelease = pre
+        return rel
+
+    def context(self):
+        """The launcher starting (again) in the installed folder: its settings, its log."""
+        ctx = Context(self.layout)
+        self.addCleanup(lambda: ctx._file and ctx._file.close())
+        return ctx
+
+    def background(self, ctx):
+        return jobs.BackgroundUpdate(ctx, lambda args: self.restarts.append(args) or True)
+
+    def stage(self, bg, rel):
+        """poll() as the window's timer calls it: start the staging, wait for it, and return how it ended."""
+        self.assertEqual(bg.poll(rel), 'started')
+        deadline = time.time() + 60
+        while bg.staging() and time.time() < deadline:
+            time.sleep(0.02)
+        return bg.poll(rel)
+
+    def state(self):
+        return updater.current(self.layout), updater.previous(self.layout), self.restarts
+
+    def test_staging_leaves_the_running_version(self):
+        """The release is unpacked beside the running version, its Python in its own folder rather than python.next
+        (which the stub would swap in at the next start, under the running version), and nothing is switched or
+        restarted."""
+        bg = self.background(self.context())
+        rel = self.publish('0.5.0', runtime='py-2')
+        self.assertEqual(self.stage(bg, rel), 'staged')
+        folder = self.layout.apps / '0.5.0'
+        self.assertTrue((folder / 'launcher' / 'start.pyw').is_file())
+        self.assertEqual(updater.read_text(folder / updater.STAGED_PYTHON / 'runtime-id.txt'), 'py-2')
+        self.assertFalse((self.layout.root / 'python.next').exists())
+        self.assertEqual(self.state(), ('0.4.0', '', []))
+        self.assertEqual(bg.ready(rel)['version'], '0.5.0')
+        self.assertIsNone(bg.poll(rel))                      # once per check
+        bg.checked()
+        self.assertIsNone(bg.poll(rel))                      # the next check finds it staged: nothing to download
+        self.assertFalse(bg.staging())
+        older = feed.Release({'format': 1, 'version': '0.4.5', 'app': {}})
+        self.assertIsNone(bg.ready(older))                   # the feed no longer offers it: not installed
+        updater.prune(self.layout)                           # an update's cleanup keeps a newer staged release
+        self.assertTrue((folder / updater.STAGED).is_file())
+
+    def test_ready_marker(self):
+        """Only a release whose staging finished (staged.json, written last) and that is still whole installs."""
+        rel = self.publish('0.5.0', runtime='py-2')
+        updater.stage_app(self.layout, rel)                  # unpacked, as an interrupted staging leaves it
+        self.assertIsNone(updater.staged(self.layout))
+        with self.assertRaises(updater.UpdateError):
+            updater.install_staged(self.layout, '0.5.0')
+        self.assertEqual(updater.current(self.layout), '0.4.0')
+        updater.stage(self.layout, rel)
+        self.assertEqual(updater.staged(self.layout)['version'], '0.5.0')
+        self.assertIsNone(updater.staged(self.layout, skip='0.5.0'))   # the version that failed to start
+        py = self.layout.apps / '0.5.0' / updater.STAGED_PYTHON
+        shutil.move(py, self.tmp / 'py')                     # the Python it needs is gone
+        self.assertIsNone(updater.staged(self.layout))
+        shutil.move(self.tmp / 'py', py)
+        self.assertIsNotNone(updater.staged(self.layout))
+        (self.layout.apps / '0.5.0' / updater.STAGED).write_text('{"version": "0.')   # cut short
+        self.assertIsNone(updater.staged(self.layout))
+        updater.stage(self.layout, rel)
+        # a pre-release counts only on the Preview channel; staging it removes the staged release it supersedes
+        updater.stage(self.layout, self.publish('0.6.0-rc1', pre=True))
+        self.assertIsNone(updater.staged(self.layout, 'stable'))
+        self.assertEqual(updater.staged(self.layout, 'preview')['version'], '0.6.0-rc1')
+        self.assertFalse((self.layout.apps / '0.5.0').exists())
+        self.assertTrue((self.layout.apps / '0.4.0').is_dir())
+
+    def test_staged_version_installs_after_a_restart(self):
+        """A staged release outlives the launcher: the next start finds it without a check and installs it: its
+        Python to python.next for the stub, current.txt, and the restart that finishes in ContinueUpdateJob."""
+        bg = self.background(self.context())
+        rel = self.publish('0.5.0', runtime='py-2')
+        self.assertEqual(self.stage(bg, rel), 'staged')
+        bg = self.background(self.context())                 # the launcher started again, still 0.4.0
+        self.assertEqual(bg.ready()['version'], '0.5.0')
+        self.assertEqual(bg.install(self.game, why='the launcher started'), '0.5.0')
+        self.assertEqual(self.state(), ('0.5.0', '0.4.0', [['--continue-update', '0.4.0']]))
+        self.assertTrue(bg.restarting)
+        self.assertEqual(updater.read_text(self.layout.root / 'python.next' / 'runtime-id.txt'), 'py-2')
+        self.assertFalse((self.layout.apps / '0.5.0' / updater.STAGED).exists())
+        # the stub rolled back from it: it is neither staged nor installed by itself again
+        self.assertTrue(updater.rollback(self.layout))
+        ctx = self.context()
+        ctx.settings['rolled_back'] = '0.5.0'
+        bg = self.background(ctx)
+        self.assertIsNone(bg.poll(rel))
+        self.assertEqual(bg.install(self.game, rel), '')
+        self.assertEqual(len(self.restarts), 1)
+
+    def test_no_install_while_the_game_runs(self):
+        """A copy of the game started elsewhere, the copy the launcher started, and a download under way each hold
+        the install back, also one the player asked for."""
+        bg = self.background(self.context())
+        rel = self.publish('0.5.0')
+        self.assertEqual(self.stage(bg, rel), 'staged')
+        self.running = True
+        self.assertEqual(bg.install(self.game, rel, why='the launcher started'), '')
+        self.assertTrue(bg.waiting)
+        self.assertEqual(bg.install(self.game, rel, asked=True), '')
+        self.running = False
+        self.assertEqual(bg.install(self.game, rel, running=True), '')
+        bg.job = jobs.StageJob(bg.ctx, feed.Release({'format': 1, 'version': '0.5.1', 'app': {}}))   # not finished
+        self.assertEqual(bg.install(self.game, rel), '')
+        self.assertEqual(self.state(), ('0.4.0', '', []))
+        self.assertTrue((self.layout.apps / '0.5.0' / updater.STAGED).is_file())
+
+    def test_install_after_the_game_exits(self):
+        """Install Updates Automatically on (the default): a release staged during play installs once the game has
+        exited."""
+        ctx = self.context()
+        self.assertTrue(ctx.settings['auto_install'])
+        bg = self.background(ctx)
+        self.running = True                                  # the check during play finds the release
+        rel = self.publish('0.5.0')
+        self.assertEqual(self.stage(bg, rel), 'staged')
+        self.assertEqual(bg.install(self.game, rel, why='the download finished'), '')
+        self.assertEqual(self.state(), ('0.4.0', '', []))
+        self.running = False                                 # the game exits
+        self.assertEqual(bg.install(self.game, rel, why='the game exited'), '0.5.0')
+        self.assertEqual(self.state(), ('0.5.0', '0.4.0', [['--continue-update', '0.4.0']]))
+        self.assertFalse(bg.waiting)
+
+    def test_nothing_automatic_when_the_setting_is_off(self):
+        """Install Updates Automatically off: the release is still staged in the background, and only selecting
+        Updates installs it (also once selected during the download)."""
+        ctx = self.context()
+        ctx.settings['auto_install'] = False
+        bg = self.background(ctx)
+        rel = self.publish('0.5.0')
+        self.assertEqual(self.stage(bg, rel), 'staged')
+        for why in ('the launcher started', 'the game exited', 'the game closed', 'the download finished'):
+            self.assertEqual(bg.install(self.game, rel, why=why), '')
+        self.assertFalse(bg.waiting)
+        self.assertEqual(self.state(), ('0.4.0', '', []))
+        bg.asked = True                                      # selected while it downloaded
+        self.assertEqual(bg.install(self.game, rel, why='the download finished'), '0.5.0')
+        self.assertEqual(self.state(), ('0.5.0', '0.4.0', [['--continue-update', '0.4.0']]))
+
+    def test_failed_download_waits_for_the_next_check(self):
+        """A staging that fails is logged, never raised, leaves nothing to install, and is tried again only after the
+        next update check."""
+        ctx = self.context()
+        bg = self.background(ctx)
+        rel = self.publish('0.5.0', damaged=True)
+        self.assertEqual(self.stage(bg, rel), 'failed')
+        self.assertIn('0.5.0 was not staged', (self.layout.logs / 'launcher.log').read_text(encoding='utf-8'))
+        self.assertIsNone(bg.poll(rel))
+        self.assertIsNone(bg.ready(rel))
+        self.assertEqual(bg.install(self.game, rel), '')
+        bg.checked()
+        self.assertEqual(self.stage(bg, rel), 'failed')
+        self.assertEqual(self.state(), ('0.4.0', '', []))
 
 
 # ---------------------------------------------------------------- gamefiles
@@ -1068,7 +1321,7 @@ class MakeGameTest(Tmp):
         def lift(out, cache):
             seen['lift_beside_romfs'] = not (out / 'romfs' / 'index.json').exists()
 
-        def compile_(out, cache, msys, jobs, romfs_job=None):
+        def compile_(out, cache, msys, jobs, romfs_job=None, update=False):
             seen['job'] = romfs_job is not None
             romfs_job.join()
             seen['image_after_join'] = (out / 'romfs' / 'romfs.bin').is_file()
@@ -1129,7 +1382,7 @@ class MakeGameTest(Tmp):
             time.sleep(0.1)
             ran.append('lift')
 
-        def compile_(out, cache, msys, jobs, romfs_job=None):
+        def compile_(out, cache, msys, jobs, romfs_job=None, update=False):
             ran.append('compile')
         self.assertEqual(self.main_with(romfs, lift, compile_), 1)
         self.assertEqual(ran, ['lift'])
@@ -1305,6 +1558,101 @@ class MakeGameTest(Tmp):
         (self.tmp / 'n.txt').write_text(dlss_pin.notice_text(), encoding='utf-8')
         self.assertEqual(self.mg.notice_sha256(self.tmp / 'n.txt'), dlss_pin.SHA256)
         self.assertEqual((dlss_pin.NAME, dlss_pin.NOTICE), (self.mg.DLSS_DLL, self.mg.DLSS_NOTICE))
+
+    def test_compile_key_ignores_file_time_and_sysroot(self):
+        """The compiler's id leaves its file time out (a tool update that puts the same compiler back keeps every
+        object), and the key leaves --sysroot out (the fast compiler's objects are the UCRT64 compiler's)."""
+        exe = self.tmp / 'cc.exe'
+        shutil.copy2(sys.executable, exe)
+        a = self.mg.compiler_ids(exe, dict(os.environ))
+        os.utime(exe, (1_700_000_000, 1_700_000_000))
+        b = self.mg.compiler_ids(exe, dict(os.environ))
+        self.assertEqual(a[0], b[0])
+        self.assertNotEqual(a[1], b[1])   # the form up to 0.6.0 had it
+        src, dst = self.tmp / 'a.c', self.tmp / 'a.o'
+        src.write_text('int a;')
+        cache = self.mg.ObjectCache(self.tmp / 'objects.json', {'<kit>': self.tmp / 'kit'})
+        plain = ['clang.exe', '-c', '-O1', '-o', str(dst), str(src)]
+        fast = ['clang.exe', '--sysroot=C:/msys64/ucrt64', '-c', '-O1', '-o', str(dst), str(src)]
+        self.assertEqual(self.mg.object_key(plain, src, dst, cache, 'id'), self.mg.object_key(fast, src, dst, cache, 'id'))
+        self.assertNotEqual(self.mg.object_key(plain, src, dst, cache, 'id', sysroot=True),
+                            self.mg.object_key(fast, src, dst, cache, 'id', sysroot=True))
+
+    def test_objects_of_an_earlier_version_are_taken_over(self):
+        """An entry under a key an earlier version gave the same compile is re-recorded under the new key when its
+        files read as they did; a header in the earlier kit's folder is read in this kit's (that folder may be gone)."""
+        old, new, lift, obj = self.tmp / 'app' / '0.5.0', self.tmp / 'app' / '0.6.1', self.tmp / 'lift', self.tmp / 'obj'
+        for d in (new / 'runtime', lift, obj):
+            d.mkdir(parents=True)
+        (new / 'runtime' / 'cpu.h').write_text('#define CPU 1\n')
+        src, dst = lift / 'main_0000.c', obj / 'main_main_0000.o'
+        src.write_text('int f(void) { return 1; }\n')
+        dst.write_bytes(b'object')
+        sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        legacy = {'key': 'old-key', 'deps': {str(src).replace('\\', '/'): sha(src),
+                                             str(old / 'runtime' / 'cpu.h').replace('\\', '/'): sha(new / 'runtime' / 'cpu.h')}}
+        (obj / 'objects.json').write_text(json.dumps({dst.name: legacy}))
+        cache = self.mg.ObjectCache(obj / 'objects.json', {'<kit>': new})
+        self.assertEqual(cache.adopt(dst, 'new-key', ['other-key'], [old]), 0)   # not a key it knows
+        self.assertEqual(cache.adopt(dst, 'new-key', ['old-key'], [old]), 1)
+        e = cache.entries[dst.name]
+        self.assertEqual(e['key'], 'new-key')
+        self.assertIn('<kit>/runtime/cpu.h', e['deps'])
+        self.assertTrue(cache.current(dst, 'new-key'))
+        # a header that changed since: compiled again
+        (obj / 'objects.json').write_text(json.dumps({dst.name: legacy}))
+        (new / 'runtime' / 'cpu.h').write_text('#define CPU 2\n')
+        cache = self.mg.ObjectCache(obj / 'objects.json', {'<kit>': new})
+        self.assertEqual(cache.adopt(dst, 'new-key', ['old-key'], [old]), 0)
+
+    def test_lifted_level_kept_on_updates(self):
+        obj = self.tmp / 'obj'
+        obj.mkdir()
+        self.assertEqual(self.mg.lifted_level(obj, 3, update=False), 3)   # a build from the game files
+        self.assertEqual(self.mg.lifted_level(obj, 3, update=True), 3)    # nothing recorded, no old cache
+        (obj / 'objects.json').write_text(json.dumps({'main_main_0000.o': {'key': 'k', 'deps': {'a.c': 'ab'}}}))
+        self.assertEqual(self.mg.lifted_level(obj, 3, update=True), 0)    # 0.5.0's cache: compiled for no level
+        (obj / self.mg.LIFTED_BUILD).write_text(json.dumps({'level': 2}))
+        self.assertEqual(self.mg.lifted_level(obj, 3, update=True), 2)    # as recorded
+        self.assertEqual(self.mg.lifted_level(obj, 1, update=True), 1)    # never above this processor's
+        self.assertEqual(self.mg.lifted_level(obj, 3, update=False), 3)
+
+    def test_updates_skip_shader_preparation(self):
+        """An update leaves the shaders to the game (shader_carry) only when they were prepared and the cache names the
+        translator they were made with: without that the game has nothing to carry them over by."""
+        out = self.tmp / 'game'
+        (out / 'shader-cache').mkdir(parents=True)
+        self.assertFalse(self.mg.shader_carry(out))   # nothing prepared yet: the update prepares
+        (out / 'shader-prepared.bin').write_bytes(b'x')
+        self.assertFalse(self.mg.shader_carry(out))   # prepared, but the cache names no translator
+        (out / 'shader-cache' / 'identities.txt').write_text('# translators\n' + 'ab' * 32 + '\n')
+        self.assertTrue(self.mg.shader_carry(out))
+        (out / 'nx2navi.ini').write_text('[performance]\nNX2NAVI_SHADER_CARRY = "0"\n')
+        self.assertFalse(self.mg.shader_carry(out))
+
+    def test_cache_from_before_carrying_names_its_translator(self):
+        """Before a new translator goes beside the game, a shader cache with no identities.txt gets one naming the
+        translator still there, in the form runtime/gfx_shader.c reads (ids_parse): '#' lines, then 64 hex digits."""
+        out = self.tmp / 'game'
+        out.mkdir()
+        old = 'B72C60033CE90FC475EF5B4D397555DDA9A52AD0FDF480B8A4E292ED925A6DE7'
+        (out / 'nx2navi_xlate.id').write_text(old + '\r\n')
+        self.mg.note_cache_translator(out)   # no cache: nothing to name
+        self.assertFalse((out / 'shader-cache' / 'identities.txt').exists())
+        (out / 'shader-cache').mkdir()
+        self.mg.note_cache_translator(out)
+        ids = out / 'shader-cache' / 'identities.txt'
+        lines = ids.read_bytes().decode('ascii').split('\n')
+        self.assertTrue(lines[0].startswith('#'))
+        self.assertEqual(lines[1], old.lower())
+        self.assertEqual(self.mg.cache_identities(out), [old.lower()])
+        (out / 'nx2navi_xlate.id').write_text('cd' * 32)   # a file the game keeps is never written over
+        self.mg.note_cache_translator(out)
+        self.assertEqual(self.mg.cache_identities(out), [old.lower()])
+        ids.unlink()
+        (out / 'nx2navi_xlate.id').write_text('not an identity')
+        self.mg.note_cache_translator(out)
+        self.assertFalse(ids.exists())
 
     def test_dlssg_beside_the_game(self):
         """DLSS Frame Generation's files go beside the game only as a whole set, with the licence texts; the release
@@ -1733,7 +2081,7 @@ class WindowTest(Tmp):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],
                            cwd=ROOT, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('10 screens drawn', r.stdout)
+        self.assertIn('11 screens drawn', r.stdout)
 
 
 if __name__ == '__main__':

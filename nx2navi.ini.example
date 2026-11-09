@@ -21,6 +21,9 @@
 # it, or with frame generation on, the game limits by itself, and also when RTSS's own frame counter shows the game
 # well past the limit (RTSS then hooks the game without holding it back). rtss = 0 always leaves it to the game.
 # rtss = 1
+# 1: asks RTSS's EnumProfiles whether the game's profile exists, instead of looking for its file. EnumProfiles crashes
+# the game (RTSS keeps a pointer of the game's in 32 bits); only for testing an RTSS that fixed it.
+# rtss_enum = 0
 # Older key, read only while fps_limit is unset: fps60 = 0 means a limit of 30.
 # fps60 = 1
 # Real-time frame step: game speed follows the clock instead of the frame count.
@@ -103,6 +106,12 @@
 # prewarm_full = 0
 # Threads that translate known shaders at start (1 to 64; default: half the CPU threads, at most 16).
 # prewarm_xlate = 8
+# After an update that brings a new shader translator, 1 keeps using the shader cache's translations from the earlier
+# translator, so the update adds no shader translation at start or in play: while you play, a background pass at the
+# lowest priority translates them again with the new translator for the next start, then deletes the old ones. A shader
+# the new translator cannot translate keeps its old translation. 0: shaders the new translator has not translated yet
+# are translated before they are used (at start or when the game first draws them), as earlier versions did.
+# shader_carry = 1
 # Vulkan graphics pipeline library, 0 or 1. Default: on.
 # gpl = 1
 
@@ -165,16 +174,14 @@
 # only the dynamic states whose values changed since the last pipeline.
 # bind_reuse = 1
 # dyn_delta = 1
-# Submit GPU work in parts every N draws between passes so the GPU starts earlier (0 to 1000; 0 = off), each part at
-# least split_us microseconds long (0 to 20000).
 # Submit GPU work in parts every N draws so the GPU starts earlier (0 to 1000; 0 = off), each part at least split_us
 # microseconds long (0 to 20000). split_in_pass = 1 also splits inside a long pass (it ends there and begins again in the
 # next part); 0 splits between passes only. split_idle = 1 sends a submission's first part at the first pass boundary
-# while the GPU has nothing else to run.
+# while the GPU has nothing else to run; it made the foliage flicker in Kokiri Forest, so it is off by default.
 # split_draws = 64
 # split_us = 1000
 # split_in_pass = 1
-# split_idle = 1
+# split_idle = 0
 
 # Vulkan.
 # Vulkan validation layer: checks every call and slows the game down a lot. Needs the layer installed (Vulkan SDK).
@@ -191,6 +198,11 @@
 # Keep a shader's threads together after divergent code where the game's shaders expect it (maximal reconvergence,
 # when the driver supports it). 0 turns it off; leaves then go missing from the foliage's colour pass.
 # vk_reconverge = 1
+# Ask the GPU driver to keep NaN, infinity and signed zero in the game's shader maths as the Switch does, 0 or 1.
+# Without it a driver may assume they never occur. The AMD symptoms it is for: Navi drawn without her orb (only her
+# sparkles), black and white blocks on her and on Link, shadows blown up. Default: on, except on NVIDIA's driver,
+# which keeps them anyway; 1 also asks NVIDIA's driver. The first start after a change compiles the pipelines again.
+# vk_nan_preserve = 1
 
 [display]
 # Device profile: auto (the Steam Deck when this is one), desktop or deck. On a Steam Deck the keys this file does not
@@ -496,6 +508,10 @@
 # last one it finished. Unset: on AMD GPUs (VK_AMD_buffer_marker). 1: also on NVIDIA GPUs
 # (VK_NV_device_diagnostic_checkpoints), which NVIDIA says costs a little. 0: off.
 # pass_crumbs = 1
+# Once a second, puts the crash report's exception filter back if a GPU driver or an overlay loaded after the start set
+# its own in its place, and says so in the log. Without it, a crash in such a DLL can end the game with no FATAL line in
+# the log. 0: off.
+# crash_filter_guard = 1
 # Render targets up to this size (bytes, 0 to 1073741824) go back to their game memory whenever the game waits for a
 # GPU fence. A larger target goes back too unless the GPU drew it in each of the last 16 frames. A game that reads a
 # larger target drawn every frame without invalidating it sees stale bytes at the default. With trace = gfx the log

@@ -1051,6 +1051,7 @@ void plat_mem_fault_hook(int (*fn)(uint64_t addr)) {
 }
 
 void plat_crash_context(const char *s) { (void)s; }   // the Windows crash notes only
+int plat_crash_filter_reassert(char *who, size_t n) { (void)who, (void)n; return 0; }   // Windows only
 
 // plat_jmp_save / plat_jmp_go (platform.h): leaf code that does not move rsp before it leaves, as on Windows.
 _Static_assert(sizeof(PlatJmp) == 72 && __builtin_offsetof(PlatJmp, mxcsr) == 64, "plat_jmp_save layout");
@@ -1833,6 +1834,10 @@ void plat_child_stop(PlatChild *c) {
     kill(c->pid, SIGKILL);
     waitpid(c->pid, NULL, 0);
     free(c);
+}
+
+void plat_child_lower(PlatChild *c) {   // a higher nice value needs no privilege
+    if (c) setpriority(PRIO_PROCESS, (id_t)c->pid, 19);
 }
 
 // A child that died makes the write fail with EPIPE; SIGPIPE is ignored for the process (main.c), as Windows has none.
