@@ -1502,10 +1502,97 @@ static uint32_t local_size_x(const uint32_t *w, uint64_t words) {
     return 0;
 }
 
+// Sampling feedback (vk.h VK_POOL_FEEDBACK): declares the feedback buffer, a struct of a runtime uint array at set 2,
+// binding VK_POOL_FEEDBACK, and stores 1 at the texture id after every access chain into the pool texture arrays
+// vars[0..nv), so the replay creates images only for the slots the GPU samples (vk_exec_draw.c "sampling feedback").
+// Every invocation stores the same value, so the races are harmless. SPIR-V 1.3 modules (the translator's) declare it
+// Uniform + BufferBlock as their own storage buffers; 1.4 and later (MeshSpirv.cs) StorageBuffer + Block, listed in
+// every entry point's interface. The uint type is reused (SPIR-V forbids a second OpTypeInt 32 0). Returns the new
+// module (free w) and its length in *out_n, or NULL when there is nothing to patch. Adapted from
+// ocarina-of-time-recomp's runtime/gfx_shader.c add_pool_feedback
+// (https://github.com/jaigner-hub/ocarina-of-time-recomp at 5c1e56f, MIT).
+static uint32_t *spirv_pool_feedback(const uint32_t *w, uint64_t n, const uint32_t *vars, int nv, uint64_t *out_n) {
+    enum { OP_ENTRY_POINT_ = 15, OP_TYPE_INT_ = 21, OP_TYPE_RUNTIME_ARRAY = 29, OP_TYPE_STRUCT = 30,
+           OP_TYPE_POINTER_ = 32, OP_CONSTANT_ = 43, OP_FUNCTION = 54, OP_VARIABLE_ = 59, OP_STORE = 62,
+           OP_ACCESS_CHAIN = 65, OP_DECORATE_ = 71, OP_MEMBER_DECORATE = 72, SC_UNIFORM = 2, SC_STORAGE_BUFFER = 12,
+           DEC_BLOCK = 2, DEC_BUFFER_BLOCK = 3, DEC_ARRAY_STRIDE = 6, DEC_BINDING = 33, DEC_DESCRIPTOR_SET = 34,
+           DEC_OFFSET = 35 };
+    if (n < 6 || !nv) return NULL;
+    int v14 = w[1] >= 0x10400;
+    uint64_t ann_end = 0, fn_at = 0, nacc = 0, neps = 0;
+    uint32_t bound = w[3], uint_t = 0;
+    for (uint64_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > n) return NULL;
+        if (!fn_at) {
+            if (op == OP_ENTRY_POINT_) neps++;
+            else if (op == OP_TYPE_INT_ && len >= 4 && w[i + 2] == 32 && w[i + 3] == 0 && !uint_t) uint_t = w[i + 1];
+            else if (op == OP_DECORATE_ || op == OP_MEMBER_DECORATE || op == 73 || op == 74 || op == 75 || op == 332 ||
+                     op == 5632 || op == 5633)
+                ann_end = i + len;
+            else if (op == OP_FUNCTION) fn_at = i;
+        }
+        if (fn_at && op == OP_ACCESS_CHAIN && len >= 5)
+            for (int k = 0; k < nv; k++) nacc += w[i + 3] == vars[k];
+        i += len;
+    }
+    if (!nacc || !ann_end || !fn_at || ann_end > fn_at) return NULL;
+    uint32_t sc = v14 ? SC_STORAGE_BUFFER : SC_UNIFORM;
+    uint32_t ut = uint_t ? uint_t : bound++, rta = bound++, st = bound++, pst = bound++, pu = bound++, c0 = bound++,
+             c1 = bound++, fb = bound++;
+    uint32_t dec[] = {4u << 16 | OP_DECORATE_, rta, DEC_ARRAY_STRIDE, 4,
+                      3u << 16 | OP_DECORATE_, st, v14 ? DEC_BLOCK : DEC_BUFFER_BLOCK,
+                      5u << 16 | OP_MEMBER_DECORATE, st, 0, DEC_OFFSET, 0,
+                      4u << 16 | OP_DECORATE_, fb, DEC_DESCRIPTOR_SET, 2,
+                      4u << 16 | OP_DECORATE_, fb, DEC_BINDING, VK_POOL_FEEDBACK};
+    uint32_t typ[40], nt = 0;
+    if (!uint_t) typ[nt++] = 4u << 16 | OP_TYPE_INT_, typ[nt++] = ut, typ[nt++] = 32, typ[nt++] = 0;
+    uint32_t rest[] = {3u << 16 | OP_TYPE_RUNTIME_ARRAY, rta, ut,
+                       3u << 16 | OP_TYPE_STRUCT, st, rta,
+                       4u << 16 | OP_TYPE_POINTER_, pst, sc, st,
+                       4u << 16 | OP_TYPE_POINTER_, pu, sc, ut,
+                       4u << 16 | OP_CONSTANT_, ut, c0, 0,
+                       4u << 16 | OP_CONSTANT_, ut, c1, 1,
+                       4u << 16 | OP_VARIABLE_, pst, fb, sc};
+    memcpy(typ + nt, rest, sizeof rest), nt += sizeof rest / 4;
+    uint64_t total = n + sizeof dec / 4 + nt + nacc * 9 + (v14 ? neps : 0);
+    uint32_t *o = malloc(total * 4), *q = o;
+    if (!o) return NULL;
+    // the header and the instructions up to the annotations' end; with 1.4 the entry points get fb in their interface
+    memcpy(q, w, 5 * 4), q += 5;
+    for (uint64_t i = 5; i < ann_end;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        memcpy(q, w + i, len * 4);
+        if (v14 && op == OP_ENTRY_POINT_) q[0] = (len + 1) << 16 | op, q[len] = fb, q += len + 1;
+        else q += len;
+        i += len;
+    }
+    memcpy(q, dec, sizeof dec), q += sizeof dec / 4;
+    memcpy(q, w + ann_end, (fn_at - ann_end) * 4), q += fn_at - ann_end;
+    memcpy(q, typ, nt * 4), q += nt;
+    for (uint64_t i = fn_at; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16, hit = 0;
+        memcpy(q, w + i, len * 4), q += len;
+        if (op == OP_ACCESS_CHAIN && len >= 5)
+            for (int k = 0; k < nv; k++) hit |= w[i + 3] == vars[k];
+        if (hit) {
+            uint32_t ptr = bound++;
+            *q++ = 6u << 16 | OP_ACCESS_CHAIN, *q++ = pu, *q++ = ptr, *q++ = fb, *q++ = c0, *q++ = w[i + 4];
+            *q++ = 3u << 16 | OP_STORE, *q++ = ptr, *q++ = c1;
+        }
+        i += len;
+    }
+    o[3] = bound;
+    *out_n = (uint64_t)(q - o);
+    return o;
+}
+
 // Pool arrays (the translator's bindless texture and sampler arrays of VK_POOL_TEX / VK_POOL_SAMP elements, found by
 // their types) move to set 2, at the binding of their view kind (vk.h VK_POOL_KINDS) or VK_POOL_KINDS for samplers;
-// the kinds used are noted in vk_pool_kinds_used so the replay fills them. NULL: nothing to move (or no memory).
-static uint32_t *spirv_pool_rebind(const uint32_t *w, uint64_t n) {
+// the kinds used are noted in vk_pool_kinds_used so the replay fills them, and the texture arrays get the sampling
+// feedback (spirv_pool_feedback) unless NX2NAVI_POOL_FEEDBACK=0. NULL: nothing to move (or no memory); else the new
+// module, *out_n words.
+static uint32_t *spirv_pool_rebind(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     enum { OP_TYPE_IMAGE = 25, OP_TYPE_SAMPLER = 26, OP_TYPE_ARRAY_ = 28 };
     uint32_t bound = n >= 5 && w[3] < (1u << 22) ? w[3] : 0;
     if (!bound) return NULL;
@@ -1537,9 +1624,11 @@ static uint32_t *spirv_pool_rebind(const uint32_t *w, uint64_t n) {
         i += len;
     }
     uint32_t *o = NULL;
+    *out_n = n;
     if (any && (o = malloc(n * 4))) {
         memcpy(o, w, n * 4);
-        uint32_t used = 0;
+        uint32_t used = 0, tvars[VK_POOL_KINDS];
+        int ntv = 0;
         for (uint64_t i = 5; i < n;) {
             uint32_t op = o[i] & 0xffff, len = o[i] >> 16;
             if (!len || i + len > n) break;
@@ -1547,11 +1636,30 @@ static uint32_t *spirv_pool_rebind(const uint32_t *w, uint64_t n) {
                 int32_t k = kind[o[i + 1]] - 2000;
                 if (o[i + 2] == SPV_DEC_DESCRIPTOR_SET) o[i + 3] = 2;
                 else if (o[i + 2] == SPV_DEC_BINDING) o[i + 3] = k == 100 ? VK_POOL_KINDS : (uint32_t)k;
-                if (k != 100) used |= 1u << k;
+                if (k != 100) {
+                    used |= 1u << k;
+                    int seen = 0;
+                    for (int t = 0; t < ntv; t++) seen |= tvars[t] == o[i + 1];
+                    if (!seen && ntv < VK_POOL_KINDS) tvars[ntv++] = o[i + 1];
+                }
             }
             i += len;
         }
         __atomic_fetch_or(&vk_pool_kinds_used, used, __ATOMIC_RELAXED);
+        uint64_t fn = 0;
+        uint32_t *f = ntv && vk_pool_feedback_on() ? spirv_pool_feedback(o, n, tvars, ntv, &fn) : NULL;
+        if (f) free(o), o = f, *out_n = fn, __atomic_store_n(&vk_pool_feedback_used, 1, __ATOMIC_RELAXED);
+        // NX2NAVI_POOL_SPV_DUMP=<dir> (diagnostic): the first 16 modules with the feedback stores, for spirv-val
+        const char *dd = f ? cfg_get("NX2NAVI_POOL_SPV_DUMP") : NULL;
+        static volatile int32_t dumped, dumped14;   // and the first 16 SPIR-V 1.4 ones (mesh stages)
+        if (dd && *dd) {
+            int v14 = o[1] >= 0x10400;
+            int32_t k = __atomic_add_fetch(v14 ? &dumped14 : &dumped, 1, __ATOMIC_RELAXED);
+            char path[1024];
+            snprintf(path, sizeof path, "%s/pool-fb%s-%d.spv", dd, v14 ? "14" : "", (int)k);
+            FILE *df = k <= 16 ? fopen(path, "wb") : NULL;
+            if (df) fwrite(o, 4, (size_t)fn, df), fclose(df);
+        }
     }
     free(kind), free(cval);
     return o;
@@ -1561,10 +1669,11 @@ static VkShaderModule make_module(const uint32_t *w, uint64_t words) {
     uint64_t fixed_n = 0;
     uint32_t *fixed = spirv_fixup(w, words, &fixed_n);
     if (fixed) w = fixed, words = fixed_n;
-    uint32_t *pooled = spirv_pool_rebind(w, words);
+    uint64_t pooled_n = 0;
+    uint32_t *pooled = spirv_pool_rebind(w, words, &pooled_n);
     if (pooled) {
         free(fixed);
-        w = fixed = pooled;
+        w = fixed = pooled, words = pooled_n;
     }
     uint64_t rc_n = 0;
     uint32_t *rc = P.reconverge ? spirv_reconverge(w, words, &rc_n) : NULL;

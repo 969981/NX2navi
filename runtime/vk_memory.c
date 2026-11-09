@@ -2075,6 +2075,18 @@ static void gpu_wrote(const VkMemSpan *sp, uint64_t size, int shader) {
             if (!snap_add(r, sp->offset + o, n = size - o < MERGE_PIECE ? size - o : MERGE_PIECE)) break;
     r->st_merge += o;
     if (o == size) return;
+    // NX2NAVI_WB_SKIP_MB=<n> (default 1; -1 off): a shader-written range of n MiB or more is not written back to
+    // guest memory for the part the merge above did not take: the game binds whole pools of 6-15 MiB for its
+    // shaders to write, which the CPU does not read. Kokiri Forest, RTX 2080 (PCIe 3.0), 0.5.0: 46 MiB a frame less
+    // over the bus, the end of a submission 4.8 -> 1.1 ms, 26 -> 31 fps, same picture (2026-11-09).
+    static int64_t skip_mb = -2;
+    if (skip_mb == -2) {
+        const char *e = cfg_get("NX2NAVI_WB_SKIP_MB");
+        skip_mb = e && *e ? atoi(e) : 1;
+        rt_log("mem: NX2NAVI_WB_SKIP_MB=%lld: shader-written ranges from that size %s", (long long)skip_mb,
+               skip_mb >= 0 ? "are not written back" : "(off: all are written back)");
+    }
+    if (shader && skip_mb >= 0 && size >= ((uint64_t)skip_mb << 20)) return;
     r->st_wb += size - o;
     range_add(&wbl, &nwbl, &cwbl, r, sp->offset + o, size - o);   // what found no snapshot room
 }

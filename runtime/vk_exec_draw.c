@@ -1704,6 +1704,7 @@ static void tex_info_full(VkExec *ex, const GfxShaderRes *r, uint64_t h, int sto
 // last current; the whole set when the log has wrapped). Writes within a submission go to its own set at once, as
 // before.
 volatile uint32_t vk_pool_kinds_used;
+volatile uint32_t vk_pool_feedback_used;
 #define POOL_SETS 4
 #define POOL_LOG (1u << 20)   // entries of the change log: binding * VK_POOL_TEX + id, one per write
 static struct {
@@ -1730,6 +1731,137 @@ static struct {
     uint64_t writes;
 } PL;
 
+// ---- sampling feedback
+// The pool held an image for every registered texture slot: Ocarina registers each texture it streams in, and on an 8
+// GiB card a field's slots alone (about 6,000 images, 5 GiB, most of them ASTC re-encoded to BC3) went past the VRAM
+// budget, the driver paged and the frame rate fell to 10 fps (D:\OOT logs of 2026-11-09, RTX 2080). Shaders that index
+// the pools store 1 at every texture id they sample (vk_pipeline.c spirv_pool_feedback) into a device-local buffer that
+// every set binds at VK_POOL_FEEDBACK; each submission that took a set copies it into host memory at its end
+// (vk_exec_pool_feedback), and pool_sync reads that every FB_MS. Only the ids seen there get their texture; the others
+// hold the stand-in of their kind, so a texture shows the stand-in for the frame or two before its first sample is
+// read back. The buffer is never cleared: a slot sampled once keeps its image (as before) until it is registered anew.
+// Adapted to this ring of sets from the pool sets of ocarina-of-time-recomp (runtime/vk_exec_draw.c,
+// https://github.com/jaigner-hub/ocarina-of-time-recomp at 5c1e56f, MIT). NX2NAVI_POOL_FEEDBACK=0: every slot gets its texture, as before.
+#define FB_MS 30
+static struct {
+    int on;                            // feedback buffers made and the knob on
+    VkBuffer dev, host;                // device-local (written by the shaders), host-cached copy (read by pool_sync)
+    VmaAllocation dev_a, host_a;
+    const volatile uint32_t *map;      // host's mapping
+    uint8_t *wanted;                   // per texture id: seen in the feedback
+    uint64_t next_ns;                  // kern_now_ns of the next read
+    uint32_t nwanted, nnew;            // ids seen so far, ids seen since the last sync
+    uint64_t copies;
+} FB;
+
+// 1 when the shaders get the feedback stores: NX2NAVI_POOL_FEEDBACK unset or 1, and the device lets vertex, tessellation,
+// geometry and fragment shaders store into buffers (create_device enables every supported feature). Decided once.
+int vk_pool_feedback_on(void) {
+    static volatile int32_t on = -1;
+    int v = __atomic_load_n(&on, __ATOMIC_ACQUIRE);
+    if (v >= 0) return v;
+    VkPhysicalDeviceFeatures f;
+    vkGetPhysicalDeviceFeatures(vk_ctx()->phys, &f);
+    v = rt_knob("POOL_FEEDBACK", "1") && f.vertexPipelineStoresAndAtomics && f.fragmentStoresAndAtomics;
+    __atomic_store_n(&on, v, __ATOMIC_RELEASE);
+    return v;
+}
+
+static void fb_init(VkCtx *c) {
+    if (!vk_pool_feedback_on()) {
+        rt_log("vk: texture pool sampling feedback off (NX2NAVI_POOL_FEEDBACK=0, or no buffer stores outside compute): "
+               "every registered slot gets its texture");
+        return;
+    }
+    VkDeviceSize size = (VkDeviceSize)VK_POOL_TEX * 4;
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
+                             .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+    // device-local and host-visible where there is such memory (the BAR heap): zeroed through the mapping
+    VmaAllocationCreateInfo da = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                           VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
+                                           VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo dinfo;
+    // the patched shaders store into it whatever happens: without it they would write through an empty descriptor
+    if (vmaCreateBuffer(c->vma, &bi, &da, &FB.dev, &FB.dev_a, &dinfo) != VK_SUCCESS)
+        rt_fatal("vk: the texture pool feedback buffer failed (NX2NAVI_POOL_FEEDBACK=0 turns the feedback off)");
+    if (!dinfo.pMappedData) {
+        rt_log("vk: texture pool sampling feedback: the device buffer is not mappable; every registered slot gets its texture");
+        return;
+    }
+    memset(dinfo.pMappedData, 0, (size_t)size);
+    vmaFlushAllocation(c->vma, FB.dev_a, 0, VK_WHOLE_SIZE);
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo ha = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo hinfo;
+    FB.wanted = calloc(VK_POOL_TEX, 1);
+    if (!FB.wanted || vmaCreateBuffer(c->vma, &bi, &ha, &FB.host, &FB.host_a, &hinfo) != VK_SUCCESS) {
+        rt_log("vk: texture pool sampling feedback: no host buffer; every registered slot gets its texture");
+        return;
+    }
+    memset(hinfo.pMappedData, 0, (size_t)size);
+    FB.map = hinfo.pMappedData;
+    FB.on = 1;
+    rt_log("vk: texture pool sampling feedback on: slots get their texture once a shader samples them "
+           "(NX2NAVI_POOL_FEEDBACK=0 turns it off)");
+}
+
+static void fb_write_sets(VkCtx *c) {
+    VkDescriptorBufferInfo bi = {FB.dev, 0, VK_WHOLE_SIZE};
+    VkDescriptorBufferInfo none = {VK_NULL_HANDLE, 0, VK_WHOLE_SIZE};
+    for (int i = 0; i < PL.nsets; i++) {
+        VkWriteDescriptorSet w = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = PL.sets[i],
+                                  .dstBinding = VK_POOL_FEEDBACK, .descriptorCount = 1,
+                                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = FB.dev ? &bi : &none};
+        if (FB.dev) vkUpdateDescriptorSets(c->device, 1, &w, 0, NULL);
+    }
+}
+
+// pool_sync: the ids the copies brought since the last read join the wanted ones; 1 when there are new ones.
+static int fb_read(void) {
+    if (!FB.on) return 0;
+    uint64_t now = kern_now_ns();
+    if (now < FB.next_ns) return 0;
+    FB.next_ns = now + FB_MS * 1000000ull;
+    vmaInvalidateAllocation(vk_ctx()->vma, FB.host_a, 0, VK_WHOLE_SIZE);
+    uint32_t nnew = 0;
+    for (uint32_t id = 0; id < VK_POOL_TEX; id++)
+        if (FB.map[id] && !FB.wanted[id]) FB.wanted[id] = 1, nnew++;
+    FB.nwanted += nnew, FB.nnew += nnew;
+    static uint64_t log_ns;
+    if (now >= log_ns) {
+        log_ns = now + 20000000000ull;
+        rt_log("vk: texture pool feedback: %u ids sampled so far (%u in the last 20 s) of %d slots registered; %llu copies",
+               FB.nwanted, FB.nnew, vk_texture_slot_count_locked(), (unsigned long long)FB.copies);
+        FB.nnew = 0;
+    }
+    return nnew != 0;
+}
+
+// The slot's token as pool_sync sees it: 0 (the stand-ins) for a slot no shader sampled yet.
+static uint64_t pool_slot_token(int id) {
+    uint64_t t = vk_texture_slot_token(id);
+    return FB.on && !FB.wanted[id] ? 0 : t;
+}
+
+void vk_exec_pool_feedback(VkExec *ex) {
+    if (!FB.on || PL.cur_fence != ex->fence || !__atomic_load_n(&vk_pool_feedback_used, __ATOMIC_RELAXED)) return;
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                           .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(ex->cb, &di);
+    VkBufferCopy r = {0, 0, (VkDeviceSize)VK_POOL_TEX * 4};
+    vkCmdCopyBuffer(ex->cb, FB.dev, FB.host, 1, &r);
+    mb = (VkMemoryBarrier2){.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
+                            .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT};
+    vkCmdPipelineBarrier2(ex->cb, &di);
+    ex->recorded += 3;
+    FB.copies++;
+}
+
 static VkDescriptorSetLayout pool_layout_make(void) {
     VkCtx *c = vk_ctx();
     VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -1737,8 +1869,9 @@ static VkDescriptorSetLayout pool_layout_make(void) {
     vkGetPhysicalDeviceFeatures2(c->phys, &f2);   // create_device enables every supported feature
     PL.uab = f12.descriptorBindingSampledImageUpdateAfterBind && f12.descriptorBindingPartiallyBound &&
              f12.descriptorBindingUpdateUnusedWhilePending;
-    VkDescriptorSetLayoutBinding b[VK_POOL_KINDS + 1];
-    VkDescriptorBindingFlags fl[VK_POOL_KINDS + 1];
+    // the image kinds, the sampler pool, then the sampling feedback buffer (written once per set, not after bind)
+    VkDescriptorSetLayoutBinding b[VK_POOL_KINDS + 2];
+    VkDescriptorBindingFlags fl[VK_POOL_KINDS + 2];
     VkDescriptorBindingFlags f = (f12.descriptorBindingPartiallyBound ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT : 0) |
         (PL.uab ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT : 0);
     for (uint32_t k = 0; k <= VK_POOL_KINDS; k++) {
@@ -1746,22 +1879,26 @@ static VkDescriptorSetLayout pool_layout_make(void) {
                                               k < VK_POOL_KINDS ? VK_POOL_TEX : VK_POOL_SAMP, VK_SHADER_STAGE_ALL, NULL};
         fl[k] = f;
     }
+    b[VK_POOL_FEEDBACK] = (VkDescriptorSetLayoutBinding){VK_POOL_FEEDBACK, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                                         VK_SHADER_STAGE_ALL, NULL};
+    fl[VK_POOL_FEEDBACK] = 0;
     VkDescriptorSetLayoutBindingFlagsCreateInfo bf = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-                                                      .bindingCount = VK_POOL_KINDS + 1, .pBindingFlags = fl};
+                                                      .bindingCount = VK_POOL_KINDS + 2, .pBindingFlags = fl};
     VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .pNext = &bf,
                                           .flags = PL.uab ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT : 0,
-                                          .bindingCount = VK_POOL_KINDS + 1, .pBindings = b};
+                                          .bindingCount = VK_POOL_KINDS + 2, .pBindings = b};
     VkDescriptorSetLayout l;
     if (vkCreateDescriptorSetLayout(c->device, &li, NULL, &l) != VK_SUCCESS) rt_fatal("vk: the texture pool layout failed");
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_POOL_KINDS * VK_POOL_TEX},
-                                  {VK_DESCRIPTOR_TYPE_SAMPLER, VK_POOL_SAMP}};
+    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_POOL_KINDS * VK_POOL_TEX},
+                                  {VK_DESCRIPTOR_TYPE_SAMPLER, VK_POOL_SAMP}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
     // POOL_SETS sets, fewer where the device has no room for them (one at the least, as before)
     for (int n = POOL_SETS; n >= 1 && !PL.nsets; n--) {
-        VkDescriptorPoolSize psn[2] = {{ps[0].type, ps[0].descriptorCount * (uint32_t)n},
-                                       {ps[1].type, ps[1].descriptorCount * (uint32_t)n}};
+        VkDescriptorPoolSize psn[3] = {{ps[0].type, ps[0].descriptorCount * (uint32_t)n},
+                                       {ps[1].type, ps[1].descriptorCount * (uint32_t)n},
+                                       {ps[2].type, ps[2].descriptorCount * (uint32_t)n}};
         VkDescriptorPoolCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                          .flags = PL.uab ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0,
-                                         .maxSets = (uint32_t)n, .poolSizeCount = 2, .pPoolSizes = psn};
+                                         .maxSets = (uint32_t)n, .poolSizeCount = 3, .pPoolSizes = psn};
         if (vkCreateDescriptorPool(c->device, &pi, NULL, &PL.dpool) != VK_SUCCESS) continue;
         VkDescriptorSetLayout ls[POOL_SETS];
         for (int i = 0; i < n; i++) ls[i] = l;
@@ -1772,6 +1909,8 @@ static VkDescriptorSetLayout pool_layout_make(void) {
     }
     if (!PL.nsets) rt_fatal("vk: the texture pool set failed");
     PL.set = PL.sets[0];
+    fb_init(c);
+    fb_write_sets(c);
     PL.log = malloc(sizeof *PL.log * POOL_LOG);
     PL.last = calloc((size_t)VK_POOL_KINDS * VK_POOL_TEX + VK_POOL_SAMP, sizeof *PL.last);
     if (!PL.log || !PL.last) rt_fatal("vk: out of memory");
@@ -2025,7 +2164,7 @@ typedef struct { VkExec *ex; uint32_t used; int n, retry; } PoolDirty;
 static void pool_dirty_slot(int id, void *arg) {   // vk_texture_dirty_slots_locked: a slot whose token may have changed
     PoolDirty *d = arg;
     if (id >= d->n) return;
-    uint64_t t = vk_texture_slot_token(id);
+    uint64_t t = pool_slot_token(id);
     if (t == PL.tok[id]) return;
     PL.n_refill++;
     if (t >> 32 != PL.tok[id] >> 32) PL.n_by_reg++;
@@ -2037,7 +2176,10 @@ static void pool_dirty_slot(int id, void *arg) {   // vk_texture_dirty_slots_loc
 static void pool_sync_entries(VkExec *ex) {
     uint32_t used = __atomic_load_n(&vk_pool_kinds_used, __ATOMIC_RELAXED);
     uint32_t gen = vk_texture_slots_gen(), ep = vk_texture_epoch(), sg = vk_sampler_gen();
-    if (PL.ready && !PL.retry && used == PL.kinds && gen == PL.gen && ep == PL.epoch && sg == PL.sgen) return;
+    // newly sampled ids: their slots are walked again (all of them: the dirty-slot list knows registrations only)
+    int sampled = fb_read();
+    if (sampled) PL.dirty_pos = 0;
+    if (PL.ready && !PL.retry && !sampled && used == PL.kinds && gen == PL.gen && ep == PL.epoch && sg == PL.sgen) return;
     vk_texture_lock();
     uint32_t fresh = used & ~PL.kinds;
     int n = vk_texture_slot_count_locked();
@@ -2051,7 +2193,7 @@ static void pool_sync_entries(VkExec *ex) {
         PL.ready = 1, PL.sgen = 0;
     }
     int retry = 0;   // slots whose texture the creation budget left: filled again by the next sync
-    if (fresh || gen != PL.gen || ep != PL.epoch || PL.retry) {
+    if (fresh || gen != PL.gen || ep != PL.epoch || PL.retry || sampled) {
         vk_texture_create_budget_locked(pool_create_budget());
         // Only a slot change since the last sync (no new kinds, no new submission, nothing left over): the slots that
         // changed (vk_texture_dirty_slots_locked), not the whole table
@@ -2061,7 +2203,7 @@ static void pool_sync_entries(VkExec *ex) {
         retry = pd.retry;
         if (!walked) PL.dirty_pos = vk_texture_dirty_pos_locked();
         for (int id = 0; id < n && !walked; id++) {   // slots past n were never registered: stand-ins since the first sync
-            uint64_t t = vk_texture_slot_token(id);
+            uint64_t t = pool_slot_token(id);
             if (t != PL.tok[id]) {
                 PL.n_refill++;
                 if (t >> 32 != PL.tok[id] >> 32) PL.n_by_reg++;
