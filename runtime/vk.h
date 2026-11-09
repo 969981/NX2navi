@@ -476,6 +476,11 @@ int vk_sampler_slot_count_locked(void);
 #define VK_POOL_SAMP 4096                           // Accessor.SamplerPoolLength
 #define VK_POOL_KINDS 16                            // kind = depth * 8 + dim * 2 + arrayed, dim 1D 2D 3D CUBE
 extern volatile uint32_t vk_pool_kinds_used;        // bit k: a pipeline was made with a kind-k pool array
+// Sampling feedback (vk_pipeline.c spirv_pool_feedback, vk_exec_draw.c "sampling feedback"): a storage buffer of
+// VK_POOL_TEX uints at this binding of the pool set, where shaders store 1 at every texture id they sample.
+#define VK_POOL_FEEDBACK (VK_POOL_KINDS + 1)
+extern volatile uint32_t vk_pool_feedback_used;     // 1: a module was made with the feedback stores
+int vk_pool_feedback_on(void);                      // the shaders get the stores (knob and device features)
 VkDescriptorSetLayout vk_pool_set_layout(void);     // the pools' layout (made on first use)
 VkDescriptorSetLayout vk_empty_set_layout(void);    // set 1 of layouts without one
 // The upscaler stand-in (vk_tonemap.c): src (sampled) scaled to dw x dh and tonemapped into its own RGBA16F image, which
