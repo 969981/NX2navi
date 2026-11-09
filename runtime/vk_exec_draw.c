@@ -36,14 +36,19 @@
 #define MAX_DESC 1024
 #define CHUNK_BYTES (4u << 20)
 #define ZERO_BYTES 65536u
-#define SUPPORT_BYTES 1504u   // the translator's SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
-                              // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440..1503 HDR (support_fill)
+#define SUPPORT_BYTES 1456u   // the translator's SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
+                              // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440 HDR (support_fill)
 #define NVN_STAGE_VS 0
 #define NVN_STAGE_FS 1
 #define NVN_STAGE_CS 5
 #define NVN_STAGE_TASK 6   // NVN2
 #define NVN_STAGE_MESH 7
-#define ONESHOT_WAIT_MS 30000u   // prepare_draw: how long a one-shot draw waits for its pipeline before it is skipped
+// What one-shot draws may wait for their pipelines in all per presented frame (oneshot_budget), one budget for passes
+// of ONESHOT_LARGE_PX pixels or more (the scene, its half-resolution buffers, shadow maps) and one for smaller passes
+// (LUTs, icon captures, the smallest bloom levels).
+#define ONESHOT_LARGE_PX 400000u
+#define ONESHOT_BUDGET_LARGE_NS 100000000ull
+#define ONESHOT_BUDGET_SMALL_NS 300000000ull
 
 enum { W_PROGRAM, W_SHADER, W_PIPELINE, W_NO_VS, W_INDEX, W_UB, W_BIND, W_SSBO_ALIGN, W_SSBO_SLOT, W_RESTART, W_INDIRECT, W_MESH, W_COUNT };
 
@@ -2279,10 +2284,10 @@ static void support_fill(uint8_t *b, float w, float h, float point_size) {
     memcpy(b + 1408, pcss_params(), 16);   // pcss (translator patch 0010): soft sun shadows in the cascade compares
     memcpy(b + 1424, shadow_spread_params(), 16);    // shadow_spread (translator patch 0011): sun shadow filter width
     for (int i = 0; i < 73; i++) memcpy(b + 192 + 16 * i, &one, 4);   // render scale 1: the host renders at guest size
-    if (vk_hdr_wanted()) {   // read by the game's tonemap only, once vk_hdr.c tonemap_splice has grown its block past the translator's
-        float hdr[16];
+    if (vk_hdr_wanted()) {   // read by the HDR tonemap only (shaders/hdr_tonemap.frag), which declares it past the translator's
+        float hdr[4];
         vk_hdr_support(hdr);
-        memcpy(b + 1440, hdr, sizeof hdr);
+        memcpy(b + 1440, hdr, 16);
     }
 }
 
@@ -3126,6 +3131,14 @@ static int skip_prog_wanted(uint64_t serial) {
     return 0;
 }
 
+// The wait budget left to this frame's one-shot draws (prepare_draw_ex), by pass size, reset at each presented frame.
+static uint64_t *oneshot_budget(int large) {
+    static uint64_t frame = ~0ull, left[2];
+    uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+    if (f != frame) frame = f, left[0] = ONESHOT_BUDGET_SMALL_NS, left[1] = ONESHOT_BUDGET_LARGE_NS;
+    return &left[large != 0];
+}
+
 // mesh: a mesh draw (op_draw_mesh): the program's mesh and task stages stand in for the vertex stage, and nothing
 // vertex-related (vertex buffers, motion vector bookkeeping of vertex shaders) is bound or noted.
 static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int mesh) {
@@ -3199,11 +3212,23 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     static uint64_t wait_left_ns;
     uint32_t wait_ms = 0;
     uint64_t t0 = 0;
+    uint64_t *budget = NULL;   // the per-frame budget a timed wait is charged to
+    // A one-shot draw waits for its pipeline from a per-frame budget (oneshot_budget), no longer 30 s each.
+    // After a scene load every pass is new, so every draw of the first frame counted as one-shot, and the frame waited
+    // for one cold pipeline after another, 300-1200 ms each: 5-14 s on an RTX 4080 SUPER, and the pipelines were built
+    // one at a time while the workers sat idle. A draw skipped for the budget comes back next frame, when its pass is
+    // recent and its pipeline is built on a worker like any other; a target drawn only once (a LUT baked at load)
+    // stays as it was until the game draws it again, which the budget keeps rare: the first few cold pipelines of a
+    // frame still get their wait.
+    int large = (uint64_t)ex->pass_w * ex->pass_h >= ONESHOT_LARGE_PX;
     if (oneshot > 0) {
-        wait_ms = ONESHOT_WAIT_MS;
+        budget = oneshot_budget(large);
+        wait_ms = (uint32_t)(*budget / 1000000);
+        if (wait_ms) t0 = kern_now_ns();
     } else if (skip < 2 && count <= 6 && (uint64_t)sc.extent.width * sc.extent.height * 2 >= (uint64_t)ex->pass_w * ex->pass_h) {
         uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
         if (f != wait_frame) wait_frame = f, wait_left_ns = 50000000;
+        budget = &wait_left_ns;
         wait_ms = (uint32_t)(wait_left_ns / 1000000);
         if (wait_ms) t0 = kern_now_ns();
     }
@@ -3219,16 +3244,20 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     } else {
         w0 = t0 ? t0 : wait_ms ? kern_now_ns() : 0;   // the clock is read only for draws that may wait
         p = vk_pipeline_graphics_async(&s, &info, &pending, wait_ms);
-        if (t0) {
+        if (t0 && budget) {
             uint64_t spent = kern_now_ns() - t0;
-            wait_left_ns = spent < wait_left_ns ? wait_left_ns - spent : 0;
+            *budget = spent < *budget ? *budget - spent : 0;
         }
-        why = oneshot > 0 ? "one-shot, shader" : wait_ms ? "full-screen" : NULL;
+        why = oneshot > 0 ? (large ? "one-shot, shader, large" : "one-shot, shader") : wait_ms ? "full-screen" : NULL;
         if (pending && oneshot < 0 && !vk_exec_targets_recent(ex, skip >= 1)) {
             perf_count(PERF_CNT_ONESHOT_WAIT);
-            why = "one-shot";
+            why = large ? "one-shot, large" : "one-shot";
             if (!w0) w0 = kern_now_ns();
-            p = vk_pipeline_graphics_async(&s, &info, &pending, ONESHOT_WAIT_MS);
+            budget = oneshot_budget(large);
+            uint64_t b0 = kern_now_ns();
+            p = vk_pipeline_graphics_async(&s, &info, &pending, (uint32_t)(*budget / 1000000));
+            uint64_t spent = kern_now_ns() - b0;
+            *budget = spent < *budget ? *budget - spent : 0;
         }
         PM.valid = !pending && p && info;
         if (PM.valid) PM.s = s, PM.info = info;
@@ -3243,7 +3272,18 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
                (unsigned long long)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1, waited / 1e6, why,
                pending ? ", skipped after all" : "", count, ex->pass_w, ex->pass_h, tg);
     }
-    if (pending) return draw_skipped(ex, mesh, SK_PIPE_PENDING);   // a background worker is building it: skipped until it is ready
+    if (pending) {   // a background worker is building it: skipped until it is ready
+        static int budget_logs;
+        if (why && strstr(why, "one-shot") && budget_logs < 20) {
+            budget_logs++;
+            rt_log("vk_exec: frame %llu: a one-shot draw into a %ux%u pass skipped: its pipeline is still building and "
+                   "the frame's %llu ms budget for %s passes is spent",
+                   (unsigned long long)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1, ex->pass_w, ex->pass_h,
+                   (unsigned long long)((large ? ONESHOT_BUDGET_LARGE_NS : ONESHOT_BUDGET_SMALL_NS) / 1000000),
+                   large ? "large" : "small");
+        }
+        return draw_skipped(ex, mesh, SK_PIPE_PENDING);
+    }
     if (!p || !info) return draw_skipped(ex, mesh, SK_PIPE_FAILED);
     if (info->pool && !pool_on()) return draw_skipped(ex, mesh, SK_POOL_OFF);
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
