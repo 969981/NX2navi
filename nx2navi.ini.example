@@ -334,9 +334,9 @@
 
 [discord]
 # Rich Presence: "Playing NX2navi" with the play time in your Discord status while the game runs, through the
-# local IPC of a running Discord client. 1 = on; the Menu tab of the settings menu (F1) switches it too, and the
-# change reaches the presence thread at once.
-# discord_rpc = 0
+# local IPC of a running Discord client; without one it does nothing. 0 = off. The Game tab of the settings menu (F1)
+# and the launcher's Settings switch it too, and a change in the menu reaches the presence thread at once.
+# discord_rpc = 1
 # The Discord application whose name ("Playing <name>") and artwork the status shows: its Application ID from
 # discord.com/developers/applications (General Information), digits only. Default: the NX2navi application, built
 # in from runtime/discord_app.h (NX2NAVI_DISCORD_APP_ID_DEFAULT). Register your own application to choose another
@@ -474,9 +474,10 @@
 # Extra lines in the log, comma separated: svc, host, ipc, fs, gfx, perf, sched, audio, present or all. The menu's
 # Performance log sets perf (frame timings). Default: none.
 # trace = perf
-# 1: with trace = perf, every 600 frames a walk of the process's address space counts its private and write-combined
-# memory (the "mem: process" line). The walk holds the address-space lock for 100-240 ms and delays the next frame by
-# as much, so it is off unless asked for.
+# 1: with trace = perf, walks of the process's address space count its private and write-combined memory every 600
+# frames (the "mem: process" line) and where its committed memory lies every 3600 frames (the "commit census" lines).
+# Each walk holds the address-space lock for 100-240 ms and delays the next frame by as much, so they are off unless
+# asked for.
 # mem_census = 0
 # Flight recorder: keeps the last frames and saves them to a flight folder next to the folder of nx2navi.exe when a frame
 # takes longer than flight_spike_ms (0 to 60000).
