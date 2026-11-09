@@ -77,10 +77,11 @@ typedef struct {
     uint64_t decoded, shown;
     int live;                // counted in movies_live: from Initialize, or a sample after a Flush, to the end-of-stream
                              // picture, Finalize or the destructor
-    int64_t ts0;             // the first shown picture's time stamp and when it was shown: the movie's clock
+    // The first shown picture's time stamp and when it was shown, for the pacing report's distance between the
+    // picture and real time; clock_on: they hold (cleared by Flush and Initialize)
+    int64_t ts0;
     uint64_t shown0_ns;
-    int clock_on;            // ts0 and shown0_ns hold; cleared by Flush and Initialize
-    uint64_t skipped;        // pictures dropped to catch up with the clock
+    int clock_on;
 } Video;
 
 static Video *video_of(void *obj) { return obj ? *(Video **)obj : NULL; }
@@ -597,8 +598,8 @@ static void ov_ok(Cpu *c) { ret_x(c, 0); }
 static void ov_finalize(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     if (v) {
-        rt_log("movie: video decoder finalised (%llu frames decoded, %llu shown, %llu skipped to keep up with the sound)",
-               (unsigned long long)v->decoded, (unsigned long long)v->shown, (unsigned long long)v->skipped);
+        rt_log("movie: video decoder finalised (%llu frames decoded, %llu shown)", (unsigned long long)v->decoded,
+               (unsigned long long)v->shown);
         finalize(v);
         set_live(v, 0);
     }
@@ -657,7 +658,7 @@ static void ov_flush(Cpu *c) {
     if (v) {
         plat_mutex_lock(&v->lock);
         v->generation++;   // the decoder and convert threads drop what they are making
-        v->clock_on = 0;   // a seek: the clock starts again from the next picture
+        v->clock_on = 0;   // a seek: the report's real-time reference starts again from the next picture
         clear_queues(v);
         clear_converts(v);
         plat_mutex_unlock(&v->lock);
@@ -735,26 +736,6 @@ static void ov_acquire(Cpu *c) {
         ret_x(c, R_NO_FRAME);
         return;
     }
-    // Catch-up: the movie's sound is a separate stream that keeps playing through the game's hitches, while the
-    // picture only advances one frame per acquisition, so each hitch left the picture further behind for good (1.7 s
-    // by the end of the title movie). A picture whose successor is already due by the movie's clock is dropped, so
-    // after a hitch the picture rejoins the sound within a few frames. NX2NAVI_MOVIE_CATCHUP=0 turns it off.
-    static int catchup = -1;
-    if (catchup < 0) {
-        const char *e = cfg_get("NX2NAVI_MOVIE_CATCHUP");
-        catchup = !(e && !strcmp(e, "0"));
-    }
-    if (catchup && v->clock_on) {
-        int64_t clock = v->ts0 + (int64_t)(plat_now_ns() - v->shown0_ns);
-        while (v->qn > 1) {
-            const Picture *next = &v->q[(v->qh + 1) % QMAX];
-            if (next->eos || !next->nv12 || next->ts > clock) break;
-            picture_free(&v->q[v->qh]);
-            v->qh = (v->qh + 1) % QMAX;
-            v->qn--;
-            v->skipped++;
-        }
-    }
     Picture p = v->q[v->qh];
     v->qh = (v->qh + 1) % QMAX;
     v->qn--;
@@ -800,7 +781,7 @@ static void ov_acquire(Cpu *c) {
             rt_log("movie: pacing over 600 frames: acquire gap avg %.2f ms, max %.2f ms; %d pictures waiting; "
                    "per frame shown: decoder thread waiting for samples %.2f ms, send %.2f ms, get %.2f ms; convert thread "
                    "%.2f ms per picture (%llu pictures); "
-                   "picture %.0f ms behind the movie's clock",
+                   "picture %.0f ms behind real time since the first picture",
                    sum_gap / 600 / 1e6, max_gap / 1e6, v->qn, t_wait_ns / 600 / 1e6, t_send_ns / 600 / 1e6,
                    t_get_ns / 600 / 1e6, n_made ? t_make_ns / n_made / 1e6 : 0.0, (unsigned long long)n_made, lag / 1e6);
             t_wait_ns = t_send_ns = t_get_ns = t_make_ns = n_made = 0;
