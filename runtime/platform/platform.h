@@ -240,6 +240,9 @@ int plat_mem_census(uint64_t *priv, uint64_t *wc, uint64_t *wc_allocs);
 // The pages of a watched reservation written since the last reset, up to max page addresses into pages, in address
 // order; reset: those reported start over as unwritten. UINT64_MAX when writes to the range are not tracked.
 uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t max, int reset);
+// Optional preparation for a known host write. Clears asynchronous write protection in bulk;
+// affected pages still count as written. Returns 0 when unavailable; the ordinary write remains valid.
+int plat_mem_prepare_write(uint64_t addr, uint64_t n);
 // A write that faulted on a read-only page at addr goes to fn first; fn returns 1 when it made the page writable and
 // the write should run again, 0 to let the fault go on (to the crash handler). One hook per process.
 void plat_mem_fault_hook(int (*fn)(uint64_t addr));
