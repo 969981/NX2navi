@@ -119,6 +119,32 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "Soft shadows",
     [UI_MENU_PCSS_DESC] = "Sun shadows sharp where an object meets the ground and softer the further the shadow falls "
                           "(PCSS). 0 keeps the game's filter. Takes effect at the next start.",
+    [UI_MENU_GAME_GFX] = "Game graphics",
+    [UI_MENU_GFX_FOLIAGE] = "Foliage distance",
+    [UI_MENU_GFX_FOLIAGE_DESC] = "How far away small trees, bushes and flowers are drawn. Further costs GPU time. "
+                                 "Applies at once.",
+    [UI_MENU_GFX_OBJECTS] = "3D object detail",
+    [UI_MENU_GFX_OBJECTS_DESC] = "How far away models keep their detailed versions. Higher costs GPU time. Applies at "
+                                 "once.",
+    [UI_MENU_GFX_GRASS] = "Grass density",
+    [UI_MENU_GFX_GRASS_DESC] = "How much grass grows. None removes it; beyond Ultra the grass breaks up. Applies at "
+                               "once.",
+    [UI_MENU_GFX_SHADOWS] = "Shadow distance",
+    [UI_MENU_GFX_SHADOWS_DESC] = "How far away the scenery (160 m in the game) and the characters (30 m) cast "
+                                 "shadows. Longer distances can make shadows a little softer. Applies at once.",
+    [UI_MENU_GFX_CONTACT] = "Screen-space shadows",
+    [UI_MENU_GFX_CONTACT_DESC] = "The game's own contact shadows, drawn from the picture: the small shadows where "
+                                 "objects touch. Off saves a little GPU time. Applies at once.",
+    [UI_MENU_GFX_QUALITY] = "Base quality",
+    [UI_MENU_GFX_QUALITY_DESC] = "Low uses the game's handheld graphics preset, for weaker GPUs. Applies at once.",
+    [UI_MENU_GFX_NONE] = "None",
+    [UI_MENU_GFX_VERY_LOW] = "Very low",
+    [UI_MENU_GFX_LOW] = "Low",
+    [UI_MENU_GFX_NORMAL] = "Normal",
+    [UI_MENU_GFX_HIGH] = "High",
+    [UI_MENU_GFX_VERY_HIGH] = "Very high",
+    [UI_MENU_GFX_ULTRA] = "Ultra",
+    [UI_MENU_GFX_EXTREME] = "Extreme",
     [UI_MENU_CONTACT_SHADOWS] = "Contact shadows",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Small sun shadows the shadow maps miss: at feet, under stones, in grass and creases. "
                                      "Traced on the screen after lighting. Takes effect at the next start.",
@@ -594,6 +620,33 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "Мягкие тени",
     [UI_MENU_PCSS_DESC] = "Тени от солнца резкие там, где предмет касается земли, и мягче, чем дальше падает тень "
                           "(PCSS). 0 оставляет фильтр игры. Действует после перезапуска.",
+    [UI_MENU_GAME_GFX] = "Графика игры",
+    [UI_MENU_GFX_FOLIAGE] = "Дальность растительности",
+    [UI_MENU_GFX_FOLIAGE_DESC] = "На каком расстоянии видны небольшие деревья, кусты и цветы. Дальше — больше "
+                                 "нагрузка на GPU. Применяется сразу.",
+    [UI_MENU_GFX_OBJECTS] = "Детализация 3D-объектов",
+    [UI_MENU_GFX_OBJECTS_DESC] = "На каком расстоянии модели остаются детализированными. Выше — больше нагрузка на "
+                                 "GPU. Применяется сразу.",
+    [UI_MENU_GFX_GRASS] = "Густота травы",
+    [UI_MENU_GFX_GRASS_DESC] = "Сколько растёт травы. «Нет» убирает её; выше «Ультра» трава распадается. Применяется "
+                               "сразу.",
+    [UI_MENU_GFX_SHADOWS] = "Дальность теней",
+    [UI_MENU_GFX_SHADOWS_DESC] = "На каком расстоянии отбрасывают тени окружение (в игре 160 м) и персонажи (30 м). "
+                                 "При большей дальности тени могут стать чуть мягче. Применяется сразу.",
+    [UI_MENU_GFX_CONTACT] = "Экранные тени",
+    [UI_MENU_GFX_CONTACT_DESC] = "Собственные контактные тени игры, построенные по изображению: мелкие тени там, где "
+                                 "предметы соприкасаются. «Выкл.» немного экономит GPU. Применяется сразу.",
+    [UI_MENU_GFX_QUALITY] = "Базовое качество",
+    [UI_MENU_GFX_QUALITY_DESC] = "«Низкое» включает портативный графический пресет игры для слабых GPU. Применяется "
+                                 "сразу.",
+    [UI_MENU_GFX_NONE] = "Нет",
+    [UI_MENU_GFX_VERY_LOW] = "Очень низкая",
+    [UI_MENU_GFX_LOW] = "Низкая",
+    [UI_MENU_GFX_NORMAL] = "Обычная",
+    [UI_MENU_GFX_HIGH] = "Высокая",
+    [UI_MENU_GFX_VERY_HIGH] = "Очень высокая",
+    [UI_MENU_GFX_ULTRA] = "Ультра",
+    [UI_MENU_GFX_EXTREME] = "Экстрим",
     [UI_MENU_CONTACT_SHADOWS] = "Контактные тени",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Мелкие тени от солнца, которых нет на картах теней: у ног, под камнями, в траве и "
                                      "складках. Считаются по экрану после освещения. Действует после перезапуска.",
@@ -1370,6 +1423,33 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_SCALE_DESC] = "Sombras mais nítidas. Mais alto exige mais da placa de vídeo.",
     [UI_MENU_SHADOW_RANGE] = "Alcance das cascatas de sombra",
     [UI_MENU_SHADOW_RANGE_DESC] = "Mantém as sombras nítidas a distâncias maiores.",
+    [UI_MENU_GAME_GFX] = "Gráficos do jogo",
+    [UI_MENU_GFX_FOLIAGE] = "Distância da vegetação",
+    [UI_MENU_GFX_FOLIAGE_DESC] = "A que distância árvores pequenas, arbustos e flores são desenhados. Mais longe "
+                                 "custa tempo de GPU. Aplica na hora.",
+    [UI_MENU_GFX_OBJECTS] = "Detalhe dos objetos 3D",
+    [UI_MENU_GFX_OBJECTS_DESC] = "A que distância os modelos mantêm suas versões detalhadas. Mais alto custa tempo de "
+                                 "GPU. Aplica na hora.",
+    [UI_MENU_GFX_GRASS] = "Densidade da grama",
+    [UI_MENU_GFX_GRASS_DESC] = "Quanta grama cresce. Nenhuma a remove; acima de Ultra a grama se desfaz. Aplica na "
+                               "hora.",
+    [UI_MENU_GFX_SHADOWS] = "Distância das sombras",
+    [UI_MENU_GFX_SHADOWS_DESC] = "A que distância o cenário (160 m no jogo) e os personagens (30 m) projetam sombras. "
+                                 "Distâncias maiores podem deixar as sombras um pouco mais suaves. Aplica na hora.",
+    [UI_MENU_GFX_CONTACT] = "Sombras de tela",
+    [UI_MENU_GFX_CONTACT_DESC] = "As sombras de contato do próprio jogo, feitas a partir da imagem: as pequenas "
+                                 "sombras onde os objetos se tocam. Desligar poupa um pouco de GPU. Aplica na hora.",
+    [UI_MENU_GFX_QUALITY] = "Qualidade base",
+    [UI_MENU_GFX_QUALITY_DESC] = "Baixa usa a predefinição gráfica portátil do jogo, para GPUs mais fracas. Aplica na "
+                                 "hora.",
+    [UI_MENU_GFX_NONE] = "Nenhuma",
+    [UI_MENU_GFX_VERY_LOW] = "Muito baixa",
+    [UI_MENU_GFX_LOW] = "Baixa",
+    [UI_MENU_GFX_NORMAL] = "Normal",
+    [UI_MENU_GFX_HIGH] = "Alta",
+    [UI_MENU_GFX_VERY_HIGH] = "Muito alta",
+    [UI_MENU_GFX_ULTRA] = "Ultra",
+    [UI_MENU_GFX_EXTREME] = "Extrema",
     [UI_MENU_CONTACT_SHADOWS] = "Sombras de contato",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Pequenas sombras do sol que os mapas de sombra não pegam: nos pés, sob pedras, "
                                      "na grama e em dobras. Traçadas na tela depois da iluminação. Vale no próximo "
@@ -1957,6 +2037,27 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_SCALE_DESC] = "让阴影更清晰。越高越吃显卡。",
     [UI_MENU_SHADOW_RANGE] = "阴影级联范围",
     [UI_MENU_SHADOW_RANGE_DESC] = "让远处的阴影保持清晰。",
+    [UI_MENU_GAME_GFX] = "游戏画面",
+    [UI_MENU_GFX_FOLIAGE] = "植被距离",
+    [UI_MENU_GFX_FOLIAGE_DESC] = "小树、灌木和花朵在多远处绘制。越远越占用 GPU 时间。立即生效。",
+    [UI_MENU_GFX_OBJECTS] = "3D 物体细节",
+    [UI_MENU_GFX_OBJECTS_DESC] = "模型在多远处保持精细版本。越高越占用 GPU 时间。立即生效。",
+    [UI_MENU_GFX_GRASS] = "草地密度",
+    [UI_MENU_GFX_GRASS_DESC] = "草的多少。“无”会移除草；高于“极高”草会出现破碎。立即生效。",
+    [UI_MENU_GFX_SHADOWS] = "阴影距离",
+    [UI_MENU_GFX_SHADOWS_DESC] = "场景（游戏中为 160 米）和角色（30 米）在多远处投射阴影。距离越远，阴影可能略显柔和。立即生效。",
+    [UI_MENU_GFX_CONTACT] = "屏幕空间阴影",
+    [UI_MENU_GFX_CONTACT_DESC] = "游戏自带的、根据画面计算的接触阴影：物体相接处的细小阴影。关闭可节省少量 GPU 时间。立即生效。",
+    [UI_MENU_GFX_QUALITY] = "基础画质",
+    [UI_MENU_GFX_QUALITY_DESC] = "“低”使用游戏的掌机模式画面预设，适合性能较弱的 GPU。立即生效。",
+    [UI_MENU_GFX_NONE] = "无",
+    [UI_MENU_GFX_VERY_LOW] = "很低",
+    [UI_MENU_GFX_LOW] = "低",
+    [UI_MENU_GFX_NORMAL] = "普通",
+    [UI_MENU_GFX_HIGH] = "高",
+    [UI_MENU_GFX_VERY_HIGH] = "很高",
+    [UI_MENU_GFX_ULTRA] = "极高",
+    [UI_MENU_GFX_EXTREME] = "极致",
     [UI_MENU_CONTACT_SHADOWS] = "接触阴影",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "阴影贴图遗漏的细小太阳阴影：脚下、石头下、草丛和褶皱中。在光照之后于屏幕空间追踪。下次启动时生效。",
     [UI_MENU_PCSS] = "柔和阴影",

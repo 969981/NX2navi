@@ -200,6 +200,22 @@
 # patch 0010), so the shader cache is rebuilt once after an update. Read at start.
 # pcss = 0
 
+# The game's own graphics parameters (Ocarina of Time 1.1.1), in percent of the game's values. Changes while the game
+# runs take effect at the next frame. Foliage distance (small trees, bushes, flowers): 25, 50, 100, 150, 200, 300 or 400.
+# 3D object detail, how far away models keep their detailed versions: 100 to 400 (below 100 objects vanish). Grass
+# density: 0 (no grass) to 300 (above it the grass breaks up). Shadow distance, of the scenery (160 m in the game) and
+# of the characters (30 m): 25 to 400.
+# gfx_foliage = 100
+# gfx_objects = 100
+# gfx_grass = 100
+# gfx_shadows = 100
+# The game's own screen-space contact shadows: 1 on (the game's setting), 0 off. Not contact_shadows above, the
+# runtime's own pass. Changes while the game runs take effect at the next frame.
+# gfx_contact_shadows = 1
+# Base quality: normal, or low, the game's handheld graphics preset, for weaker GPUs. Changes while the game runs take
+# effect at the next frame.
+# gfx_base_quality = normal
+
 # NVIDIA DLSS / DLAA for the 3D scene, on NVIDIA RTX GPUs with the DLSS model from NVIDIA's DLSS SDK next to the
 # executable (Windows: nvngx_dlss.dll next to nx2navi.exe; Linux: libnvidia-ngx-dlss.so.<version> next to nx2navi, with the
 # NVIDIA driver's libnvidia-ngx.so.1 installed); elsewhere the setting does nothing. The HUD is drawn after it and is not touched.

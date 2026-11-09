@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "fs.h"
+#include "gfx_tweaks.h"
 #include "host.h"
 #include "kernel.h"
 #include "vk.h"
@@ -239,6 +240,9 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
         return;
     }
     case 0x29: get_info(c, pc); return;
+    case RT_SVC_HOST_HOOK:   // a host hook a code patch put in front of a game instruction (gfx_tweaks.h)
+        if (gfx_tweaks_hook(c, pc)) return;
+        svc_fatal(c, imm, pc, "no host hook at this address");
     case 0x07: {   // ExitProcess, as closing the window (gfx_window_closed): pipeline cache, shader records and
                    // profile saved, logs flushed, exit code 0
         char at[160];

@@ -17,6 +17,7 @@ set wide_hud    NX2NAVI_PATCH_WIDE_HUD    0
 set wide_movie  NX2NAVI_PATCH_WIDE_MOVIE  0
 set res_fixed   NX2NAVI_PATCH_RES_FIXED   0
 set ostep       NX2NAVI_OCARINA_REALTIME  1
+set gfx_hook    NX2NAVI_GFX_HOOK          1  optional
 
 # Real-time step: the framework's per-frame update (main+0x6e6be0) gives the time manager **[main+0x4c7e890] its
 # nominal frame through main+0x3b4e300 (+0x10 frames per update, +0x14 the inverse, +0x18 seconds, +0x1c the rate),
@@ -88,3 +89,10 @@ site wide_hud main 774368 ad401041 ad401041 @page:x16 fd404a10 6e040431 6e0c2491
 # Pre-rendered movies: the movie layer's draw (main+0x3b5c71c) builds a viewport over the whole picture (sead viewport
 # at x29 - 40: min x +8, max x +16); it moves in by the page's margin on each side, the middle 16:9 of the picture.
 site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:x17 bd40c233 1e330a52 1e322a10 1e323a31 bd000a10 bd001211 a941a269   # movie layer viewport: ldp x9, x8, [x19, #0x18]
+
+# Graphics settings: the graphics system's per-frame update (main+0x31d3200, called from main+0x31c00cc with the graphics
+# system in x0) starts with svc #0x4e58, which runtime/svc.c hands to runtime/gfx_tweaks.c gfx_tweaks_hook; the hook
+# writes the foliage, object detail, grass, shadow, contact shadow and quality preset parameters the menu settings ask
+# for, then the update's own first instruction runs. The SVC keeps every register and writes no flags. The set is
+# optional: in another game build the site does not match and the lift leaves the set out (docs/game-graphics.md).
+site gfx_hook main 31d3200 39788008 d409cb01 39788008   # ldrb w8, [x0, #0xe20] -> svc #0x4e58; ldrb w8, [x0, #0xe20]

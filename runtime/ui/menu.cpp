@@ -59,6 +59,7 @@ void vk_queue_unlock(void);
 void res_sizes(unsigned out[2], unsigned scene[2]);
 int res_adjustable(void);
 int wide_available(void);
+int gfx_tweaks_available(void);
 const char *const *vk_color_preset(const char *name);
 int vk_hdr_wanted(void);
 int vk_hdr_active(void);
@@ -651,6 +652,46 @@ static void row_shadow_range(void) {
     opt_choice_list("NX2NAVI_SHADOW_RANGE", UI_MENU_SHADOW_RANGE, vals, names, 4, UI_MENU_SHADOW_RANGE_DESC);
 }
 
+// The game's own graphics parameters (gfx_tweaks.c), live: each row a percent of the game's value, named by level with
+// the factor (the shadows by the scenery's distance). Only where the generated C has the hook (gfx_tweaks_available).
+static void row_gfx_level(const char *key, UiTextId label, UiTextId desc, const char *const *vals,
+                          const UiTextId *levels, int n, bool metres) {
+    char shown[8][48];
+    const char *names[8];
+    for (int i = 0; i < n && i < 8; i++) {
+        double k = atoi(vals[i]) / 100.0;
+        if (k == 0) snprintf(shown[i], sizeof shown[i], "%s", menu_text(levels[i]));   // None
+        else if (metres) snprintf(shown[i], sizeof shown[i], "%s (%.0f m)", menu_text(levels[i]), 160 * k);
+        else snprintf(shown[i], sizeof shown[i], "%s (%g×)", menu_text(levels[i]), k);   // U+00D7
+        names[i] = shown[i];
+    }
+    opt_choice_list(key, label, vals, names, n, desc);
+}
+
+static void row_game_gfx(void) {
+    if (!gfx_tweaks_available()) return;
+    opt_group(UI_MENU_GAME_GFX);
+    static const char *const foliage[] = {"25", "50", "100", "150", "200", "300", "400"};
+    static const UiTextId foliage_n[] = {UI_MENU_GFX_VERY_LOW, UI_MENU_GFX_LOW, UI_MENU_GFX_NORMAL, UI_MENU_GFX_HIGH,
+                                         UI_MENU_GFX_VERY_HIGH, UI_MENU_GFX_ULTRA, UI_MENU_GFX_EXTREME};
+    row_gfx_level("NX2NAVI_GFX_FOLIAGE", UI_MENU_GFX_FOLIAGE, UI_MENU_GFX_FOLIAGE_DESC, foliage, foliage_n, 7, false);
+    static const char *const objects[] = {"100", "150", "200", "300", "400"};   // below 1x models vanish
+    static const UiTextId objects_n[] = {UI_MENU_GFX_NORMAL, UI_MENU_GFX_HIGH, UI_MENU_GFX_VERY_HIGH, UI_MENU_GFX_ULTRA,
+                                         UI_MENU_GFX_EXTREME};
+    row_gfx_level("NX2NAVI_GFX_OBJECTS", UI_MENU_GFX_OBJECTS, UI_MENU_GFX_OBJECTS_DESC, objects, objects_n, 5, false);
+    static const char *const grass[] = {"0", "25", "50", "100", "150", "200", "300"};   // above 3x the grass breaks up
+    static const UiTextId grass_n[] = {UI_MENU_GFX_NONE, UI_MENU_GFX_VERY_LOW, UI_MENU_GFX_LOW, UI_MENU_GFX_NORMAL,
+                                       UI_MENU_GFX_HIGH, UI_MENU_GFX_VERY_HIGH, UI_MENU_GFX_ULTRA};
+    row_gfx_level("NX2NAVI_GFX_GRASS", UI_MENU_GFX_GRASS, UI_MENU_GFX_GRASS_DESC, grass, grass_n, 7, false);
+    static const char *const shadows[] = {"25", "50", "100", "200", "300", "400"};
+    static const UiTextId shadows_n[] = {UI_MENU_GFX_VERY_LOW, UI_MENU_GFX_LOW, UI_MENU_GFX_NORMAL, UI_MENU_GFX_HIGH,
+                                         UI_MENU_GFX_VERY_HIGH, UI_MENU_GFX_ULTRA};
+    row_gfx_level("NX2NAVI_GFX_SHADOWS", UI_MENU_GFX_SHADOWS, UI_MENU_GFX_SHADOWS_DESC, shadows, shadows_n, 6, true);
+    opt_toggle("NX2NAVI_GFX_CONTACT_SHADOWS", UI_MENU_GFX_CONTACT, UI_MENU_GFX_CONTACT_DESC);
+    static const UiTextId quality[] = {UI_MENU_GFX_NORMAL, UI_MENU_GFX_LOW};
+    opt_choice("NX2NAVI_GFX_BASE_QUALITY", UI_MENU_GFX_QUALITY, quality, 2, UI_MENU_GFX_QUALITY_DESC);
+}
+
 static void row_gpu(void) {
     const char *vals[MAX_GPUS + 1], *names[MAX_GPUS + 1];
     char idx[MAX_GPUS][4];
@@ -910,6 +951,7 @@ static void tab_screen(float scale) {
     int dl = cfg_bool("NX2NAVI_DLAA"), fsr3 = dl && !strcmp(cfg_value("NX2NAVI_TAA"), "fsr3");
     if (!fsr3 && (strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
     opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
+    row_game_gfx();
     opt_end();
 }
 

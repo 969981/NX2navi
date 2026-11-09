@@ -677,6 +677,13 @@ def main():
     mods = layout(args.exefs)
     write_layout(mods, args.out)
     table = patches.load(args.patches, mods) if args.patches else patches.Table()
+    # An optional set whose sites this build does not have as expected (another game version) is left out with a note
+    # rather than stopping the lift: its feature is then absent at run time (recomp/patches.py prune).
+    bases = {n: b for n, b, _ in mods}
+    loaded = {n: Module(n, args.exefs / n, bases[n], 'c') for n in patches.optional_modules(table)}
+    table, dropped = patches.prune(table, loaded)
+    for name, why in dropped:
+        print(f'patches: optional set {name} left out: {why}')
     write_if_changed(args.out / 'patches.h', patches.header_text(table, GENERATED_MARKER))
     want = args.modules.split(',')
     unknown = set(want) - {n for n, _, _ in mods}
@@ -689,7 +696,7 @@ def main():
             continue
         t = time.perf_counter()
         path = args.exefs / name
-        mod = Module(name, path, base, 'c')
+        mod = loaded.pop(name, None) or Module(name, path, base, 'c')
         patches.check(table, mod, name)
         starts, dstats = discover(mod)
         est = estimate_sizes(mod, starts)

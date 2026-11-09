@@ -3,14 +3,16 @@
 Lifted code cannot be byte-patched when the game runs, so a patch is applied when the C is generated. A patch file
 (gen.py --patches) has two kinds of lines; `#` starts a comment, fields are separated by whitespace:
 
-  set  <name> <env> <default>               a patch set: a run-time switch <env>=0/1, <default> when it is unset
+  set  <name> <env> <default> [optional]    a patch set: a run-time switch <env>=0/1, <default> when it is unset
   site <set> <module> <address> <original> <replacement> [<replacement> ...]
 
   spin <module> <head> <back-edge> [<back-edge> ...]
 
 <address> is a module offset (hex), <original> the instruction word the module has there (checked; a mismatch stops
 the generator), each <replacement> an instruction word (hex) or `@page:x<n>`, which is `adrp x<n>, <patch page>`
-encoded for the site's address. The patch page is the first 4 KiB page after main's image (layout.py leaves the rest
+encoded for the site's address. An optional set is different on a mismatch: prune leaves the whole set out of the
+build with a note instead of stopping, patches.h then has no such set, and the runtime keeps its feature off and
+hidden (a game build the set was not written for). The patch page is the first 4 KiB page after main's image (layout.py leaves the rest
 of the 2 MiB-aligned module slot free); the runtime commits it and owns its contents. Words in use, by byte offset:
 +0..15 the frame-rate step (runtime/frame_rate.c), +16..55 the output, swapchain and scene sizes
 (runtime/resolution.c res_init), +56..59 the camera's aspect ratio (runtime/resolution.c res_init, set aspect), +60..63
@@ -24,6 +26,10 @@ first set in file order wins. The original may be any instruction but br, blr an
 a bl (lifted with the site's return address), a b or b.cond / cbz / tbz (its target joins the function's labels when
 inside it) or a ret; earlier words must not branch. Every alternative of a site writes the same flags. The generator
 writes patches.h (set names, switches, the page address) next to layout.h for the runtime.
+
+A replacement that runs host code at a site puts `svc #0x4e58` (d409cb01) before the original word: the SVC stores the
+registers back and reloads them after, writes no flags, and runtime/svc.c hands it with the site's address to the host
+hook there (runtime/gfx_tweaks.h RT_SVC_HOST_HOOK).
 
 A `spin` line names a spin wait found by tools/spin_waits.py: a loop with head <head> that only another thread can end,
 and the direct branches back to it (module offsets). Each back-edge (checked: a b, b.cond, cbz / cbnz or tbz / tbnz to
@@ -51,8 +57,9 @@ class Table:
     """sets: [(name, env, default)]; sites: {module: {offset: [(set index, [word | ('page', reg)], original)]}} (the
     alternatives of a site in file order); page."""
 
-    def __init__(self, sets=(), sites=None, page=0, spins=None):
+    def __init__(self, sets=(), sites=None, page=0, spins=None, optional=()):
         self.sets = list(sets)
+        self.optional = set(optional)   # indices of the optional sets
         self.sites = sites or {}
         self.page = page
         self.spins = spins or {}   # {module: {back-edge offset: head offset}}
@@ -73,17 +80,19 @@ class Table:
 
 def load(path, mods):
     """Table from a patch file; mods is layout() output [(name, base, size)]."""
-    sets, index, sites, spins = [], {}, {}, {}
+    sets, index, sites, spins, optional = [], {}, {}, {}, set()
     bases = {n: (b, s) for n, b, s in mods}
     for no, raw in enumerate(Path(path).read_text().splitlines(), 1):
         f = raw.split('#', 1)[0].split()
         if not f:
             continue
         where = f'{path}:{no}'
-        if f[0] == 'set' and len(f) == 4:
+        if f[0] == 'set' and (len(f) == 4 or len(f) == 5 and f[4] == 'optional'):
             if f[1] in index:
                 raise PatchError(f'{where}: set {f[1]} defined twice')
             index[f[1]] = len(sets)
+            if len(f) == 5:
+                optional.add(len(sets))
             sets.append((f[1], f[2], int(f[3])))
         elif f[0] == 'site' and len(f) >= 6:
             if f[1] not in index:
@@ -119,7 +128,47 @@ def load(path, mods):
     nxt = min((b for _, b, _ in mods if b > base), default=None)
     if nxt is not None and page + PAGE > nxt:
         raise PatchError(f'no room for the patch page after main ({page:#x})')
-    return Table(sets, sites, page, spins)
+    return Table(sets, sites, page, spins, optional)
+
+
+def optional_modules(table):
+    """Names of the modules that hold sites of optional sets (prune reads them)."""
+    return sorted(m for m, sites in table.sites.items()
+                  if any(k in table.optional for alts in sites.values() for k, _, _ in alts))
+
+
+def prune(table, modules):
+    """The table without the optional sets one of whose sites the module does not have as expected (outside .text, or
+    another original word: another game build), with the sets renumbered, and [(set name, why)] for those left out.
+    modules: {name: gen.Module} for optional_modules(table). A set left out is absent from patches.h, so the runtime
+    finds no such set (rt_patch_set gives -1) and its feature stays off and hidden."""
+    bad = {}
+    for name, sites in table.sites.items():
+        mod = modules.get(name)
+        for off, alts in sites.items():
+            ks = [k for k, _, _ in alts if k in table.optional and k not in bad]
+            if not ks:
+                continue
+            a, want = mod.base + off, alts[0][2]
+            have = mod.word(a) if mod.in_text(a) else None
+            if have != want:
+                why = (f'{name}+{off:#x} is outside .text' if have is None else
+                       f'{name}+{off:#x} has {have:08x}, the patch expects {want:08x}')
+                for k in ks:
+                    bad[k] = why
+    if not bad:
+        return table, []
+    keep = [k for k in range(len(table.sets)) if k not in bad]
+    new = {k: i for i, k in enumerate(keep)}
+    sites = {}
+    for name, ss in table.sites.items():
+        for off, alts in ss.items():
+            alts = [(new[k], r, o) for k, r, o in alts if k in new]
+            if alts:
+                sites.setdefault(name, {})[off] = alts
+    out = Table([table.sets[k] for k in keep], sites, table.page, table.spins,
+                {new[k] for k in table.optional if k in new})
+    return out, [(table.sets[k][0], why) for k, why in sorted(bad.items())]
 
 
 def check(table, mod, name):

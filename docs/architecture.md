@@ -41,6 +41,9 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
   variables and written back when the in-game menu changes it. The menu and the performance overlay are Dear ImGui,
   drawn into the swapchain image (`runtime/ui/`); their text is in `ui_text.c`.
 - OS calls the host makes go through `runtime/platform/` (`platform.h`, `win32.c`).
+- Host hooks inside game code: a patch set can put `svc #0x4e58` in front of a game instruction, and `runtime/svc.c`
+  runs host code there on the game's thread. The game graphics settings use one at the graphics system's per-frame
+  update to write the game's parameter objects ([game-graphics.md](game-graphics.md)).
 
 #### Threads and cores
 
