@@ -105,7 +105,9 @@ XLATE_NAME = 'nx2navi_xlate.exe' if WIN else 'nx2navi_xlate'
 GENERATED_HEADERS = ('layout.h', 'patches.h', 'romfs_config.h')
 RUNTIME_LIB = 'libnx2navirt.a'
 RUNTIME_PATTERNS = ('*.c', '*.cpp', 'platform/*.c', 'ui/*.cpp', 'third_party/imgui/*.cpp',
-                    'third_party/imgui/backends/*.cpp')
+                    'third_party/imgui/backends/*.cpp', 'third_party/fsr_vulkan/src/*.c',
+                    'third_party/fsr_vulkan/src/*.cpp', 'third_party/fsr_vulkan/sdk/src/*.cpp',
+                    'third_party/fsr_vulkan/sdk/src/**/*.cpp')
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]+"([^"]+)"', re.M)
 
 # Runs a script the way `python script.py` does, with the script's folder first on sys.path. The launcher's
@@ -924,7 +926,16 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None):
     srcs.append((modules_c(lift, out, gen), obj / 'modules.o'))
     if WIN:
         srcs.append((gen / 'shim.c', obj / 'shim.o'))
-    inc = ['-I', str(rt), '-I', str(lift), '-I', str(gen), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma)]
+    inc = ['-I', str(rt), '-I', str(lift), '-I', str(gen), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'include'), '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'src'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'sdk' / 'include'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'sdk' / 'src' / 'shared'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'sdk' / 'src' / 'components'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'sdk' / 'src' / 'backends' / 'shared'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'sdk' / 'src' / 'backends' / 'shared' / 'blob_accessors'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'generated' / 'ffx-1.1.4' / 'vk' / 'fsr3upscaler'),
+           '-I', str(rt / 'third_party' / 'fsr_vulkan' / 'generated' / 'ffx-1.1.4' / 'vk' / 'fsr3framegeneration'),
+           '-DFFX_VK_PORTABLE_HAS_FSR3_UPSCALER=1', '-DFFX_FSR3UPSCALER', '-DFFX_FI', '-DFFX_OF']
     cid = compiler_id(clang, env)
     level = cpu_level(clang, env)
     say(f'  the lifted code is built for x86-64-v{level}, this processor\'s level' if level else
