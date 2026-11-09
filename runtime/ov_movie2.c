@@ -94,7 +94,7 @@ static void set_live(Video *v, int live) {   // the guest's decode and acquire t
 }
 // Time summed for the pacing report (one movie plays at a time): on the decoder thread waiting for the game's next
 // sample, dav1d_send_data and dav1d_get_picture; on the convert thread make_picture (deband and conversion)
-static uint64_t t_wait_ns, t_send_ns, t_get_ns, t_make_ns;
+static uint64_t t_wait_ns, t_send_ns, t_get_ns, t_make_ns, n_made;   // n_made: pictures converted
 
 // under v->lock
 static void update_events(Video *v) {
@@ -441,6 +441,7 @@ static void convert_thread(void *arg) {
             Picture p;
             int ok = make_picture(&d.pic, &p);
             t_make_ns += plat_now_ns() - t0;
+            n_made++;
             dav1d_picture_unref(&d.pic);
             if (ok) deliver(v, p, d.gen);
         }
@@ -797,11 +798,12 @@ static void ov_acquire(Cpu *c) {
         if (gap > max_gap) max_gap = gap;
         if (n % 600 == 0) {
             rt_log("movie: pacing over 600 frames: acquire gap avg %.2f ms, max %.2f ms; %d pictures waiting; "
-                   "per frame: decoder thread waiting for samples %.2f ms, send %.2f ms, get %.2f ms; convert thread %.2f ms; "
+                   "per frame shown: decoder thread waiting for samples %.2f ms, send %.2f ms, get %.2f ms; convert thread "
+                   "%.2f ms per picture (%llu pictures); "
                    "picture %.0f ms behind the movie's clock",
                    sum_gap / 600 / 1e6, max_gap / 1e6, v->qn, t_wait_ns / 600 / 1e6, t_send_ns / 600 / 1e6,
-                   t_get_ns / 600 / 1e6, t_make_ns / 600 / 1e6, lag / 1e6);
-            t_wait_ns = t_send_ns = t_get_ns = t_make_ns = 0;
+                   t_get_ns / 600 / 1e6, n_made ? t_make_ns / n_made / 1e6 : 0.0, (unsigned long long)n_made, lag / 1e6);
+            t_wait_ns = t_send_ns = t_get_ns = t_make_ns = n_made = 0;
             sum_gap = max_gap = 0;
         }
         last_ns = now;
