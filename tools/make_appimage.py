@@ -5,8 +5,10 @@ player's PC from their own dump with tools/make_game.py, as NX2navi-Setup.exe do
 
 The AppImage holds no game files: the kit's tools/, recomp/, runtime/ and docs, the shader translator built by
 tools/build_xlate.py (bin/nx2navi_xlate), the pinned Vulkan Memory Allocator header, and a relocatable CPython 3.14
-(python-build-standalone, as `uv python install 3.14` puts in ~/.local/share/uv/python) with numpy, lz4, zstandard and
-fonttools. zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with
+(python-build-standalone, as `uv python install 3.14` puts in ~/.local/share/uv/python) with numpy, lz4, zstandard,
+fonttools and pillow, and with --prompt-art the button art make_game.py's prompts step draws from (as make_kit.py
+--prompt-art: the pictures tools/prompt_art.py art_files names, into the kit's prompt-art folder; without it that step
+is skipped and the game keeps the Switch prompts). zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with
 pip into ~/.local/share/nx2navi/pydeps the first time it runs, as the Windows launcher downloads it.
 
 The compiler and the libraries come from the system (README-BuildKit.md, "Linux"): the AppImage checks for clang,
@@ -24,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 KIT_DIRS = ('recomp', 'runtime')
 KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2navi.ini.example')
 TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')   # the translator ships built (bin/); its sources stay out
-PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0')
+PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0', 'pillow==12.3.0')
 
 APPRUN = r'''#!/bin/bash
 # NX2navi build kit for Linux: builds Ocarina of Time (Switch 2, game 1.1.1) from the player's own dump.
@@ -93,8 +95,39 @@ esac
 NUP="$1"
 OUT="${2:-$HOME/Games/Ocarina}"
 [ -f "$NUP" ] || { echo "error: $NUP is not a file" >&2; usage; exit 1; }
+# NVIDIA's DLSS for Linux, the game's DLSS upscaling (runtime/resolution.c finds libnvidia-ngx-dlss.so.<version> beside
+# the game): downloaded from NVIDIA's DLSS SDK repository on NVIDIA systems only, the version and checksum
+# tools/dlss_pin.py pins for Windows, unmodified, with the notice it writes. NX2NAVI_NO_DLSS=1 skips it.
+DLSS_VERSION=310.9.1
+DLSS_SO="libnvidia-ngx-dlss.so.$DLSS_VERSION"
+DLSS_SHA256=7561f16cab74e2b7ccf791bf44bb9cc43abb44bcf78f33c5663520ad4e857e02
+get_dlss() {
+    [ -e /proc/driver/nvidia/version ] && [ -z "${NX2NAVI_NO_DLSS:-}" ] || return 0
+    [ -f "$OUT/$DLSS_SO" ] && echo "$DLSS_SHA256  $OUT/$DLSS_SO" | sha256sum -c --status && return 0
+    echo "Downloading NVIDIA DLSS $DLSS_VERSION for Linux (NVIDIA RTX SDKs License) ..."
+    local tmp="$OUT/$DLSS_SO.part"
+    if curl -fsSL -o "$tmp" "https://raw.githubusercontent.com/NVIDIA/DLSS/v$DLSS_VERSION/lib/Linux_x86_64/rel/$DLSS_SO" &&
+       echo "$DLSS_SHA256  $tmp" | sha256sum -c --status; then
+        mv -f "$tmp" "$OUT/$DLSS_SO"
+        cat > "$OUT/libnvidia-ngx-dlss-NOTICE.txt" <<EON
+$DLSS_SO is NVIDIA DLSS $DLSS_VERSION, unmodified, published in NVIDIA's DLSS SDK
+(https://github.com/NVIDIA/DLSS, tag v$DLSS_VERSION). Copyright NVIDIA Corporation.
+
+It is not part of NX2navi and NX2navi's licence does not cover it. It is distributed under the
+NVIDIA RTX SDKs License, and its use is subject to that licence: https://github.com/NVIDIA/DLSS/blob/v$DLSS_VERSION/LICENSE.txt
+NVIDIA licenses DLSS only for use on systems with NVIDIA GPUs.
+
+sha256 $DLSS_SHA256
+EON
+    else
+        rm -f "$tmp"
+        echo "warning: DLSS could not be downloaded or did not match its checksum; the game runs without it" >&2
+    fi
+}
+
 echo "Building into $OUT with $jobs compiles at a time (${mem_gb} GB of RAM); this takes 10 to 25 minutes."
 run_make_game --nup "$NUP" --out "$OUT" --jobs "$jobs" || exit $?
+get_dlss
 
 # play.sh: the environment the game wants on this machine, then the game
 {
@@ -132,6 +165,9 @@ def main():
                     help='a relocatable CPython 3.14 folder (python-build-standalone, ~/.local/share/uv/python/cpython-3.14*)')
     ap.add_argument('--appimagetool', type=Path, required=True, help='appimagetool-x86_64.AppImage')
     ap.add_argument('--out', type=Path, default=ROOT / 'dist', help='where the AppImage goes (default dist/)')
+    ap.add_argument('--prompt-art', type=Path, nargs='+', metavar='FOLDER',
+                    help='folders holding XGamepad, P5Gamepad and Keyboard_Mouse (or those folders): the button art, as '
+                         'make_kit.py --prompt-art takes it (a release zip\'s prompt-art folder does too)')
     a = ap.parse_args()
 
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
@@ -157,6 +193,11 @@ def main():
         shutil.copy2(xlate / f, kit / 'bin' / f)
     (kit / 'toolchain' / 'vma').mkdir(parents=True)
     shutil.copy2(ROOT / 'toolchain' / 'vma' / 'vk_mem_alloc.h', kit / 'toolchain' / 'vma' / 'vk_mem_alloc.h')
+    if a.prompt_art:
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import prompt_art
+        n, size = prompt_art.copy_art(a.prompt_art, kit / prompt_art.FOLDER)
+        print(f'button art: {n} files, {size / 1e6:.1f} MB')
 
     py = app / 'usr' / 'python'
     shutil.copytree(a.python, py, symlinks=True)
