@@ -741,6 +741,21 @@ def cpu_level(clang, env):
     p = subprocess.run([str(clang), '-march=native', '-E', '-dM', '-x', 'c', os.devnull], capture_output=True,
                        text=True, env=env, errors='replace')
     have = set(re.findall(r'^#define (__\w+) ', p.stdout, re.M)) if p.returncode == 0 else set()
+    level = 3 if CPU_V3 <= have else 2 if CPU_V2 <= have else 0
+    if level:
+        return level
+    # Where clang's native detection finds no level (some sandboxes hide the CPU from it), /proc/cpuinfo still names
+    # the flags. Only a level the flags prove is returned, so the lifted code never uses an instruction this CPU lacks.
+    try:
+        flags = set(Path('/proc/cpuinfo').read_text(errors='replace').split())
+    except OSError:
+        return 0
+    flag_macro = {'pni': '__SSE3__', 'ssse3': '__SSSE3__', 'sse4_1': '__SSE4_1__', 'sse4_2': '__SSE4_2__',
+                  'popcnt': '__POPCNT__', 'lahf_lm': '__LAHF_SAHF__', 'avx': '__AVX__', 'avx2': '__AVX2__',
+                  'bmi1': '__BMI__', 'bmi2': '__BMI2__', 'f16c': '__F16C__', 'fma': '__FMA__',
+                  'abm': '__LZCNT__', 'movbe': '__MOVBE__', 'xsave': '__XSAVE__',
+                  'cx16': '__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16'}
+    have = {flag_macro[f] for f in flags if f in flag_macro}
     return 3 if CPU_V3 <= have else 2 if CPU_V2 <= have else 0
 
 
@@ -1073,7 +1088,12 @@ def cpu_tag():
     compile key, so a game folder moved to a PC without them (or a new processor) is compiled again rather than kept
     with instructions the processor lacks. 'any' where it cannot be read."""
     if os.name != 'nt':
-        return 'any'
+        # The Linux analogue of the Windows feature check below: /proc/cpuinfo names the same three features.
+        try:
+            flags = set(Path('/proc/cpuinfo').read_text(errors='replace').split())
+        except OSError:
+            return 'any'
+        return ''.join('1' if f in flags else '0' for f in ('sse4_2', 'avx2', 'avx512f'))
     try:
         import ctypes
         present = ctypes.windll.kernel32.IsProcessorFeaturePresent
@@ -1095,8 +1115,9 @@ def step_key(step, identity, out=None):
                    f'|cpu {cpu_tag()}')
     if step == 'compile':
         return compile_key
-    # shaders: the built game and the translator that prepared them
-    return f'shaders-1|{compile_key}|{sha256_file(KIT / "tools" / "prepare_shaders.py")}|{sha256_file(KIT / "bin" / "nx2navi_xlate.id")}'
+    # shaders: the built game and the translator that prepared them. xlate_source() finds the translator wherever
+    # it was built (the kit's bin/, else build/xlate/ from a source checkout), so a source build's key reads it too.
+    return f'shaders-1|{compile_key}|{sha256_file(KIT / "tools" / "prepare_shaders.py")}|{sha256_file(xlate_source() / "nx2navi_xlate.id")}'
 
 
 def main():
