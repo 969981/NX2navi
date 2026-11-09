@@ -1211,12 +1211,11 @@ static void dirty_frame(uint64_t frame) {
 //   submission, exact byte ranges, before the fence signals (vk_mem_mirror_end).
 // - NX2NAVI_MEMORY=verify: every submission also copies up to VERIFY_BYTES of mirror pages, round robin, into host memory;
 //   at its fence the pages the CPU has not written since their sync are compared with guest memory.
-// A pool stays imported when its mirror would not fit the VRAM budget, its range is not write-watched, it overlaps
-// another pool or the allocation fails.
+// A pool stays imported when its range is not write-watched, it overlaps another pool or the allocation fails.
 #define VERIFY_BYTES (4u << 20)
 #define VERIFY_SAMPLES 64
 #define VERIFY_LOG 200
-enum { MR_BUDGET, MR_UNTRACKED, MR_OVERLAP, MR_ALLOC, MR_N };
+enum { MR_UNTRACKED, MR_OVERLAP, MR_ALLOC, MR_N };
 
 int vk_mirror_on;
 static int mirror_verify;
@@ -1242,7 +1241,7 @@ typedef struct {
 static MirrorAcc mrep;                 // replay: this submission
 static MirrorAcc macc;                 // mirror_stat_lock: since the last summary
 static PlatMutex mirror_stat_lock = PLAT_MUTEX_INIT;
-static volatile int64_t m_live_n, m_live_bytes, m_refused_n[MR_N], m_refused_bytes[MR_N];
+static volatile int64_t m_live_n, m_live_bytes, m_refused_n[MR_N];
 static volatile int64_t m_flush_calls, m_flush_bytes, v_pages, v_skipped, v_mismatch;
 
 static void mirror_mode(int discrete) {
@@ -1342,14 +1341,12 @@ static void mbarrier(VkCommandBuffer cb, VkPipelineStageFlags2 ss, VkAccessFlags
 
 static void refuse(PoolRec *r, int why, const char *what) {
     r->mstate = MS_REFUSED;
-    uint64_t n = r->import_hi - r->import_lo;
     if (plat_inc64(&m_refused_n[why]) <= 4) {
         char f[160];
         flag_names(r->flags, f, sizeof f);
         rt_log("mem: pool %#llx+%#llx (%s) stays imported: %s", (unsigned long long)r->lo, (unsigned long long)r->size,
                f, what);
     }
-    plat_add64(&m_refused_bytes[why], (int64_t)n);
 }
 
 // Replay thread: the pool's mirror on its first buffer use.
@@ -1369,14 +1366,10 @@ static void mirror_create(PoolRec *r) {
     if (!alone) return refuse(r, MR_OVERLAP, "it overlaps another pool");
     uint64_t r0 = r->import_lo >> SNAP_SHIFT, r1 = (r->import_hi - 1) >> SNAP_SHIFT;
     if (r1 >= SNAP_REGIONS) return refuse(r, MR_UNTRACKED, "outside the write-watched address space");
-    uint64_t used, budget;
-    int exact;
-    if (vk_mem_vram(&used, &budget, &exact) && used + n + budget / 8 > budget) {
-        char why[128];
-        snprintf(why, sizeof why, "its %.1f MiB mirror does not fit the VRAM budget (%.0f of %.0f MiB in use)",
-                 n / 1048576.0, used / 1048576.0, budget / 1048576.0);
-        return refuse(r, MR_BUDGET, why);
-    }
+    // No VRAM budget check: a mirror the driver cannot keep in VRAM is paged to system memory, where the import already
+    // is, so mirroring never reads slower than staying imported. Refusing over the budget kept every pool first used
+    // after a save load filled the VRAM imported for good: on a 6 GiB RTX 3060 Laptop, 210 pools (88 MiB) read over
+    // PCIe took the GPU from 33 to 75-80 ms a frame.
     plat_mutex_lock(&gen_lock);
     mrep.sync_queries += snap_regions(r0, r1, mepoch);
     int untracked = 0;
@@ -2087,13 +2080,13 @@ static void mirror_log(uint64_t frame) {
                  (long long)plat_xchg64(&v_pages, 0), (long long)plat_xchg64(&v_skipped, 0),
                  (long long)plat_xchg64(&v_mismatch, 0));
     vk_gpa_report();
-    rt_log("mem: mirror frame %llu: pools %lld, %.1f MiB device-local; stay imported: budget %lld (%.1f MiB), untracked "
+    rt_log("mem: mirror frame %llu: pools %lld, %.1f MiB device-local; stay imported: untracked "
            "%lld, overlapping %lld, failed %lld; per frame: submits %.2f, syncs %.1f, upload %.3f MiB in %.1f ranges, "
            "first use %.2f pools %.3f MiB, write-back %.3f MiB in %.1f ranges, merge %.3f MiB in %.1f dispatches "
            "(snapshots %.3f MiB, new buffers %.2f), flush calls %.1f (%.3f MiB), queries "
            "%.1f pre-snap (%.1f MiB) + %.1f sync, prologues %.2f, tracking cpu %.3f ms (pre-snap %.3f, syncs %.3f)%s",
-           (unsigned long long)frame, (long long)m_live_n, m_live_bytes / M, (long long)m_refused_n[MR_BUDGET],
-           m_refused_bytes[MR_BUDGET] / M, (long long)m_refused_n[MR_UNTRACKED], (long long)m_refused_n[MR_OVERLAP],
+           (unsigned long long)frame, (long long)m_live_n, m_live_bytes / M, (long long)m_refused_n[MR_UNTRACKED],
+           (long long)m_refused_n[MR_OVERLAP],
            (long long)m_refused_n[MR_ALLOC], a.subs / f, a.syncs / f, a.upload_bytes / f / M, a.upload_copies / f,
            a.first_n / f, a.first_bytes / f / M, a.wb_bytes / f / M, a.wb_copies / f, a.merge_bytes / f / M,
            a.merge_dispatches / f, a.snap_bytes / f / M, a.snap_allocs / f, fc / f, fb / f / M,
