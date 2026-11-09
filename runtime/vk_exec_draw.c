@@ -3143,7 +3143,9 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     VkRect2D sc = vk_exec_scissor(ex);
     if (!sc.extent.width || !sc.extent.height) return draw_skipped(ex, mesh, SK_SCISSOR);
     if (!ex->prog) return draw_skipped(ex, mesh, SK_NO_PROGRAM);
-    if (getenv("NX2NAVI_SKIP_PROG") && skip_prog_wanted(ex->prog->serial)) return draw_skipped(ex, mesh, SK_DISABLED);
+    // n_skip_prog is read once (skip_prog_wanted): a getenv here, on every draw, took the environment lock and walked
+    // every variable, about a sixth of the replay thread's samples in Kokiri Forest
+    if (n_skip_prog && skip_prog_wanted(ex->prog->serial)) return draw_skipped(ex, mesh, SK_DISABLED);
     int has_vs, has_fs, vs_wait = 0, fs_wait = 0, memo = mesh ? 0 : shader_memo_on();
     int has_ts = 0, ts_wait = 0, vst = mesh ? NVN_STAGE_MESH : NVN_STAGE_VS;
     const GfxShader *vs, *fs, *ts = NULL;
