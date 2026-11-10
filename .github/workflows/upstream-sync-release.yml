@@ -1,0 +1,221 @@
+name: Monitor NX2navi upstream and publish
+
+on:
+  schedule:
+    # Twice per hour, away from the top-of-hour Actions queue.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nx2navi-upstream-mirror
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect upstream source and release changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      new_release: ${{ steps.check.outputs.new_release }}
+      upstream_sha: ${{ steps.check.outputs.upstream_sha }}
+      latest_tag: ${{ steps.check.outputs.latest_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare against the original project
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPO: tangerineturtle1/NX2navi
+          MIRROR_AUTHORIZED: ${{ vars.NX2NAVI_MIRROR_AUTHORIZED }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --filter=blob:none "https://github.com/$UPSTREAM_REPO.git" refs/heads/main
+          upstream_sha="$(git rev-parse FETCH_HEAD)"
+          if git merge-base --is-ancestor "$upstream_sha" HEAD; then
+            changed=false
+          else
+            changed=true
+          fi
+
+          latest_tag="$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq '.tag_name')"
+          if [[ ! "$latest_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+            echo "::error::Unexpected upstream release tag: $latest_tag"
+            exit 1
+          fi
+          if gh release view "$latest_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            new_release=false
+          else
+            new_release=true
+          fi
+
+          {
+            echo "changed=$changed"
+            echo "new_release=$new_release"
+            echo "upstream_sha=$upstream_sha"
+            echo "latest_tag=$latest_tag"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### NX2navi upstream monitoring"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Upstream commit | \`$upstream_sha\` |"
+            echo "| New upstream commits | $changed |"
+            echo "| Latest official release | $latest_tag |"
+            echo "| Official release not mirrored | $new_release |"
+            if [[ "$MIRROR_AUTHORIZED" == true ]]; then
+              echo "| Redistribution authorization switch | Enabled |"
+            else
+              echo "| Redistribution authorization switch | Disabled: monitoring only |"
+            fi
+            echo ""
+            echo "Original project: https://github.com/$UPSTREAM_REPO"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Authorized synchronization and publication
+    needs: detect
+    if: ${{ vars.NX2NAVI_MIRROR_AUTHORIZED == 'true' && (needs.detect.outputs.changed == 'true' || needs.detect.outputs.new_release == 'true') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_REPO: tangerineturtle1/NX2navi
+      UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
+      LATEST_TAG: ${{ needs.detect.outputs.latest_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge changes without overwriting local workflows
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --filter=blob:none "https://github.com/$UPSTREAM_REPO.git" refs/heads/main
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream source is already present."
+          else
+            git merge --no-ff -m "Merge authorized NX2navi upstream main $UPSTREAM_SHA" "$UPSTREAM_SHA"
+            # GITHUB_TOKEN pushes do not trigger ordinary push workflows.
+            python3 tools/check_content.py
+            git push origin HEAD:main
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish source-only snapshot on an upstream commit change
+        if: steps.sync.outputs.merged == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="$(printf '%.12s' "$UPSTREAM_SHA")"
+          snapshot_tag="upstream-$short_sha"
+          if gh release view "$snapshot_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Snapshot already exists: $snapshot_tag"
+            exit 0
+          fi
+          cat > "$RUNNER_TEMP/snapshot-notes.md" <<EOF
+          Unofficial source-only snapshot synchronized from [tangerineturtle1/NX2navi](https://github.com/$UPSTREAM_REPO).
+
+          Upstream commit: [\`$UPSTREAM_SHA\`](https://github.com/$UPSTREAM_REPO/commit/$UPSTREAM_SHA)
+
+          No playable game, game files or Windows installer is built by this snapshot.
+          For the original release, see https://github.com/$UPSTREAM_REPO/releases
+          EOF
+          gh release create "$snapshot_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ steps.sync.outputs.head }}" \
+            --title "NX2navi upstream source snapshot $short_sha (unofficial)" \
+            --notes-file "$RUNNER_TEMP/snapshot-notes.md" \
+            --prerelease
+
+      - name: Mirror new official upstream release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Official release already mirrored: $LATEST_TAG"
+            exit 0
+          fi
+
+          # Preserve the upstream release tag's actual source revision, not today's tip.
+          git fetch --no-tags "https://github.com/$UPSTREAM_REPO.git" "refs/tags/$LATEST_TAG"
+          tag_commit="$(git rev-parse 'FETCH_HEAD^{commit}')"
+          existing_tag="$(git ls-remote --tags origin "refs/tags/$LATEST_TAG" | head -n 1 | cut -f1)"
+          if [[ -n "$existing_tag" ]]; then
+            if [[ "$existing_tag" != "$tag_commit" ]]; then
+              echo "::error::Local tag $LATEST_TAG does not match the upstream source commit."
+              exit 1
+            fi
+          else
+            git push origin "$tag_commit:refs/tags/$LATEST_TAG"
+          fi
+
+          asset_dir="$RUNNER_TEMP/nx2navi-official-assets"
+          mkdir -p "$asset_dir"
+          gh release download "$LATEST_TAG" --repo "$UPSTREAM_REPO" --dir "$asset_dir"
+          shopt -s nullglob
+          assets=("$asset_dir"/*)
+          if (( ${#assets[@]} == 0 )); then
+            echo "::error::The official release contains no downloadable assets."
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            case "$(basename "$asset")" in
+              NX2navi-Setup-*.exe|NX2navi-app-*.zip|NX2navi-runtime-*.zip|NX2navi-update.json) ;;
+              *)
+                echo "::error::Unexpected upstream asset, review required: $asset"
+                exit 1
+                ;;
+            esac
+          done
+
+          # GitHub exposes an SHA-256 digest for supported release assets.
+          # Verify all supplied hashes; older assets without digests are reported.
+          while IFS=$'\t' read -r name digest; do
+            [[ -n "$name" ]] || continue
+            [[ -f "$asset_dir/$name" ]] || { echo "::error::Missing asset: $name"; exit 1; }
+            if [[ "$digest" == sha256:* ]]; then
+              expected="${digest#sha256:}"
+              actual="$(sha256sum "$asset_dir/$name" | cut -d' ' -f1)"
+              [[ "$expected" == "$actual" ]] || { echo "::error::SHA-256 mismatch: $name"; exit 1; }
+            else
+              echo "::warning::No upstream SHA-256 digest available for $name"
+            fi
+          done < <(gh api "repos/$UPSTREAM_REPO/releases/tags/$LATEST_TAG" --jq '.assets[] | [.name, (.digest // "")] | @tsv')
+
+          {
+            echo "Unofficial release mirror of [tangerineturtle1/NX2navi](https://github.com/$UPSTREAM_REPO)."
+            echo ""
+            echo "Original release and provenance: https://github.com/$UPSTREAM_REPO/releases/tag/$LATEST_TAG"
+            echo ""
+            echo "These assets are copies of the official upstream binaries, not independently built or re-signed."
+            echo "The original launcher may still use the upstream update feed."
+            echo ""
+            echo "---"
+            echo ""
+          } > "$RUNNER_TEMP/official-notes.md"
+          gh release view "$LATEST_TAG" --repo "$UPSTREAM_REPO" --json body --jq '.body' >> "$RUNNER_TEMP/official-notes.md"
+
+          gh release create "$LATEST_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "NX2navi $LATEST_TAG (unofficial upstream mirror)" \
+            --notes-file "$RUNNER_TEMP/official-notes.md"
+
+          echo "Mirrored official release $LATEST_TAG"
