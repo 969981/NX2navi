@@ -37,6 +37,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          if ! timeout 60 git ls-remote --exit-code --heads "https://github.com/$UPSTREAM_REPO.git" refs/heads/main >/dev/null; then
+            echo "::warning::Legacy NX2navi upstream unavailable; no synchronization or publishing."
+            echo "Successor candidate: https://git.triforceproject.com/triforce/source (separate history and authorization review required)." >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "new_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git fetch --no-tags --filter=blob:none "https://github.com/$UPSTREAM_REPO.git" refs/heads/main
           upstream_sha="$(git rev-parse FETCH_HEAD)"
           if git merge-base --is-ancestor "$upstream_sha" HEAD; then
