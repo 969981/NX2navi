@@ -3,6 +3,10 @@
 This repository monitors [tangerineturtle1/NX2navi](https://github.com/tangerineturtle1/NX2navi) through
 [upstream-sync-release.yml](../.github/workflows/upstream-sync-release.yml).
 
+## Successor project (2026-11-24)
+
+[Triforce](https://git.triforceproject.com/triforce/source) is the candidate successor. The source site was reachable on 2026-11-24. Keep the legacy repository and releases intact; do not automatically merge Triforce or reuse NX2navi redistribution authorization for it. If legacy main cannot be reached, monitoring skips publication and reports the successor link.
+
 ## Schedule and permission
 
 The workflow checks upstream twice per hour, at minutes 17 and 47 UTC. GitHub Actions cron
